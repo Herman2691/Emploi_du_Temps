@@ -323,10 +323,17 @@ class CourseQueries:
 
     @staticmethod
     def get_by_department(department_id):
-        return execute_query(
-            "SELECT * FROM courses WHERE department_id=%s AND is_active=TRUE ORDER BY name",
-            (department_id,)
-        )
+        return execute_query("""
+            SELECT c.*,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.group_label AS ue_group,
+                   ue.credits     AS ue_credits
+            FROM courses c
+            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
+            WHERE c.department_id=%s AND c.is_active=TRUE
+            ORDER BY ue.group_label NULLS LAST, ue.name NULLS LAST, c.name
+        """, (department_id,))
 
     @staticmethod
     def get_by_class(class_id):
@@ -335,15 +342,22 @@ class CourseQueries:
         tous les cours du département si aucun horaire encore planifié.
         """
         courses = execute_query("""
-            SELECT DISTINCT c.* FROM courses c
+            SELECT DISTINCT c.*,
+                   ue.name AS ue_name, ue.code AS ue_code,
+                   ue.group_label AS ue_group
+            FROM courses c
+            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
             JOIN schedules s ON s.course_id=c.id
             WHERE s.class_id=%s AND s.is_active=TRUE AND c.is_active=TRUE
             ORDER BY c.name
         """, (class_id,))
-        # Fallback : retourne les cours du département si aucun horaire
         if not courses:
             courses = execute_query("""
-                SELECT c.* FROM courses c
+                SELECT c.*,
+                       ue.name AS ue_name, ue.code AS ue_code,
+                       ue.group_label AS ue_group
+                FROM courses c
+                LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
                 JOIN departments d  ON c.department_id=d.id
                 JOIN promotions pr  ON pr.department_id=d.id
                 JOIN classes cl     ON cl.promotion_id=pr.id
@@ -1451,12 +1465,20 @@ class GradeQueries:
             SELECT g.*, s.full_name AS student_name, s.student_number,
                    s.email AS student_email,
                    c.name AS course_name, c.code AS course_code,
-                   COALESCE(c.weight, 1.0) AS course_weight
+                   COALESCE(c.weight, 1.0)    AS course_weight,
+                   COALESCE(c.credits_ec, 1.0) AS credits_ec,
+                   c.ue_id,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.credits     AS ue_credits,
+                   ue.group_label AS ue_group
             FROM grades g
             JOIN students s ON g.student_id = s.id
             JOIN courses  c ON g.course_id  = c.id
+            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
             WHERE s.class_id = %s AND g.session_name = %s
-            ORDER BY s.full_name, c.name, g.exam_type
+            ORDER BY s.full_name, ue.group_label NULLS LAST,
+                     ue.code NULLS LAST, c.name, g.exam_type
         """, (class_id, session_name))
 
     @staticmethod
@@ -1479,17 +1501,26 @@ class GradeQueries:
 
     @staticmethod
     def get_bulletin_by_student(student_id, session_name):
-        """Notes publiées d'un étudiant pour une session."""
+        """Notes publiées d'un étudiant pour une session (inclut infos UE/EC)."""
         return execute_query("""
-            SELECT g.*, c.name AS course_name, c.code AS course_code,
-                   COALESCE(c.weight, 1.0) AS course_weight,
+            SELECT g.*,
+                   c.name  AS course_name,  c.code AS course_code,
+                   COALESCE(c.weight, 1.0)    AS course_weight,
+                   COALESCE(c.credits_ec, 1.0) AS credits_ec,
+                   c.ue_id,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.credits     AS ue_credits,
+                   ue.group_label AS ue_group,
                    p.name AS professor_name
             FROM grades g
-            JOIN courses    c ON g.course_id    = c.id
-            JOIN professors p ON g.professor_id = p.id
+            JOIN courses    c  ON g.course_id    = c.id
+            JOIN professors p  ON g.professor_id = p.id
+            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
             WHERE g.student_id = %s AND g.session_name = %s
               AND g.status = 'publie'
-            ORDER BY c.name, g.exam_type
+            ORDER BY ue.group_label NULLS LAST, ue.code NULLS LAST,
+                     c.name, g.exam_type
         """, (student_id, session_name))
 
     @staticmethod
@@ -2301,6 +2332,122 @@ class StudentResultsQueries:
             ORDER BY computed_at DESC
             LIMIT 1
         """, (student_id, session_name), fetch="one")
+
+
+# ============================================================
+# UNITÉS D'ENSEIGNEMENT (UE)
+# ============================================================
+class UEQueries:
+
+    @staticmethod
+    def get_by_department(department_id):
+        return execute_query("""
+            SELECT ue.*,
+                   COUNT(c.id) FILTER (WHERE c.is_active)              AS ec_count,
+                   COALESCE(SUM(c.credits_ec) FILTER (WHERE c.is_active), 0) AS total_ec_credits
+            FROM unites_enseignement ue
+            LEFT JOIN courses c ON c.ue_id = ue.id
+            WHERE ue.department_id = %s AND ue.is_active = TRUE
+            GROUP BY ue.id
+            ORDER BY ue.group_label, ue.code NULLS LAST, ue.name
+        """, (department_id,))
+
+    @staticmethod
+    def get_by_id(ue_id):
+        return execute_query(
+            "SELECT * FROM unites_enseignement WHERE id=%s",
+            (ue_id,), fetch="one"
+        )
+
+    @staticmethod
+    def create(department_id, name, code, credits, group_label="A"):
+        return execute_query("""
+            INSERT INTO unites_enseignement
+                (department_id, name, code, credits, group_label)
+            VALUES (%s,%s,%s,%s,%s) RETURNING id
+        """, (department_id, name, code or None,
+              credits, group_label or "A"), fetch="one")
+
+    @staticmethod
+    def update(ue_id, name, code, credits, group_label="A"):
+        execute_query("""
+            UPDATE unites_enseignement
+            SET name=%s, code=%s, credits=%s, group_label=%s
+            WHERE id=%s
+        """, (name, code or None, credits,
+              group_label or "A", ue_id), fetch="none")
+
+    @staticmethod
+    def delete(ue_id):
+        execute_query(
+            "UPDATE unites_enseignement SET is_active=FALSE WHERE id=%s",
+            (ue_id,), fetch="none"
+        )
+
+    @staticmethod
+    def assign_course(course_id, ue_id, credits_ec=1.0):
+        execute_query(
+            "UPDATE courses SET ue_id=%s, credits_ec=%s WHERE id=%s",
+            (ue_id, credits_ec, course_id), fetch="none"
+        )
+
+    @staticmethod
+    def unassign_course(course_id):
+        execute_query(
+            "UPDATE courses SET ue_id=NULL, credits_ec=1 WHERE id=%s",
+            (course_id,), fetch="none"
+        )
+
+
+# ============================================================
+# RÉSULTATS PAR UE PAR ÉTUDIANT
+# ============================================================
+class StudentUEResultsQueries:
+
+    @staticmethod
+    def upsert(student_id, ue_id, session_name, academic_year,
+               note_ue, credits_obtained, decision, computed_by=None):
+        execute_query("""
+            INSERT INTO student_ue_results
+                (student_id, ue_id, session_name, academic_year,
+                 note_ue, credits_obtained, decision, computed_at, computed_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(),%s)
+            ON CONFLICT (student_id, ue_id, session_name, academic_year) DO UPDATE
+                SET note_ue          = EXCLUDED.note_ue,
+                    credits_obtained = EXCLUDED.credits_obtained,
+                    decision         = EXCLUDED.decision,
+                    computed_at      = NOW(),
+                    computed_by      = EXCLUDED.computed_by
+        """, (student_id, ue_id, session_name, academic_year,
+              note_ue, credits_obtained, decision, computed_by), fetch="none")
+
+    @staticmethod
+    def get_by_student_session(student_id, session_name):
+        return execute_query("""
+            SELECT sur.*,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.credits     AS ue_credits,
+                   ue.group_label AS ue_group
+            FROM student_ue_results sur
+            JOIN unites_enseignement ue ON sur.ue_id = ue.id
+            WHERE sur.student_id = %s AND sur.session_name = %s
+            ORDER BY ue.group_label, ue.code NULLS LAST
+        """, (student_id, session_name))
+
+    @staticmethod
+    def get_by_class_session(class_id, session_name):
+        return execute_query("""
+            SELECT sur.*,
+                   s.full_name AS student_name, s.student_number,
+                   ue.name AS ue_name, ue.code AS ue_code,
+                   ue.credits AS ue_credits, ue.group_label AS ue_group
+            FROM student_ue_results sur
+            JOIN students s ON sur.student_id = s.id
+            JOIN unites_enseignement ue ON sur.ue_id = ue.id
+            WHERE s.class_id = %s AND sur.session_name = %s
+            ORDER BY s.full_name, ue.group_label, ue.code NULLS LAST
+        """, (class_id, session_name))
 
 
 # ============================================================

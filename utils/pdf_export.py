@@ -360,3 +360,210 @@ def generate_bulletin_pdf(
              align="C")
 
     return bytes(pdf.output())
+
+
+def generate_bulletin_pdf_ue(
+    student_name: str,
+    student_number: str,
+    class_name: str,
+    promotion_name: str,
+    university_name: str,
+    session_name: str,
+    ue_map: dict,
+    by_group: dict,
+    group_avgs: dict,
+    total_avg: float,
+    obtained_credits: float,
+    total_ue_credits: float,
+    ecs_a_reprendre: int,
+    final_decision: str,
+    mention: str,
+    rank=None,
+) -> bytes:
+    """Génère un bulletin UE/EC au format académique (analogue bulletin.jpeg). Retourne bytes PDF."""
+
+    _GREEN  = (16,  185, 129)
+    _RED    = (239,  68,  68)
+    _AMBER  = (245, 158,  11)
+    _GRAY   = (100, 116, 139)
+    _LIGHT  = (248, 250, 252)
+    _BORDER = (226, 232, 240)
+    _DARK   = (30,   41,  59)
+    _WHITE  = (255, 255, 255)
+    _BLUE   = (37,   99, 235)
+    _DKBLUE = (30,   64, 175)
+    _LBLUE  = (239, 246, 255)
+    _VIOLET = (124,  58, 237)
+
+    def _nc(val):
+        if val >= 16: return _VIOLET
+        if val >= 14: return _GREEN
+        if val >= 10: return _AMBER
+        return _RED
+
+    def _cell(pdf, w, h, txt, fill=False, border=1, align="L", bold=False, sz=8,
+               color=None, bg=None):
+        if bg:
+            pdf.set_fill_color(*bg)
+        if color:
+            pdf.set_text_color(*color)
+        pdf.set_font("Helvetica", "B" if bold else "", sz)
+        pdf.cell(w, h, txt, border=border, fill=fill, align=align)
+        pdf.set_text_color(*_DARK)
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_margins(12, 12, 12)
+    W = 186  # largeur utile (210 - 24)
+
+    # ── En-tête ────────────────────────────────────────────────────────────────
+    pdf.set_fill_color(*_DKBLUE)
+    pdf.rect(0, 0, 210, 30, style="F")
+    pdf.set_y(5)
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_text_color(*_WHITE)
+    pdf.cell(210, 8, "BULLETIN DE NOTES", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(210, 5, university_name, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(210, 5, f"Session : {session_name}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_y(34)
+    pdf.set_text_color(*_DARK)
+
+    # ── Infos étudiant ─────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(*_LIGHT)
+    pdf.cell(W, 6, "  INFORMATIONS ÉTUDIANT", fill=True, new_x="LMARGIN", new_y="NEXT")
+    _infos = [
+        ("Nom & Prénoms", student_name),
+        ("N° Matricule",  student_number),
+        ("Classe",        class_name),
+        ("Promotion",     promotion_name),
+        ("Mention",       mention),
+    ]
+    if rank is not None:
+        _infos.append(("Rang", str(rank)))
+    pdf.set_font("Helvetica", "", 8)
+    for _k, _v in _infos:
+        pdf.set_text_color(*_GRAY)
+        pdf.cell(42, 5, f"  {_k} :", new_x="RIGHT")
+        pdf.set_text_color(*_DARK)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(W - 42, 5, _v, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 8)
+    pdf.ln(3)
+
+    # ── En-tête du tableau ─────────────────────────────────────────────────────
+    _CW = [22, 72, 16, 18, 22, 22, 14]  # Code | Intitulé | Crd EC | Crd UE | Note EC | Note UE | Dec
+    _HDRS = ["Code", "Intitulé UE / Élément Constitutif", "Crd EC", "Crd UE", "Note EC", "Note UE", "Dec"]
+
+    pdf.set_fill_color(*_DKBLUE)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 7.5)
+    for _h, _cw in zip(_HDRS, _CW):
+        pdf.cell(_cw, 7, f" {_h}", border=1, fill=True, align="C")
+    pdf.ln()
+
+    # ── Lignes UE / EC ─────────────────────────────────────────────────────────
+    for glabel in sorted(by_group.keys()):
+        ues_g = sorted(by_group[glabel], key=lambda u: u.get("ue_code", ""))
+        for ue in ues_g:
+            nue = ue["note_ue"]
+            dec = ue["decision"]
+            nue_c = _GREEN if nue >= 10 else _RED
+            dec_c = _GREEN if dec == "V" else _RED
+
+            # Ligne UE (fond bleu clair, bold)
+            pdf.set_fill_color(*_LBLUE)
+            pdf.set_text_color(*_DARK)
+            pdf.set_font("Helvetica", "B", 8)
+            _row_ue = [
+                ue.get("ue_code", "") or "",
+                _truncate(ue["ue_name"], 36),
+                "—",
+                f"{ue['ue_credits']:.0f}",
+                "—",
+                f"{nue:.2f}",
+                dec,
+            ]
+            for _i, (_v, _cw) in enumerate(zip(_row_ue, _CW)):
+                if _i == 5:
+                    pdf.set_text_color(*nue_c)
+                elif _i == 6:
+                    pdf.set_text_color(*dec_c)
+                else:
+                    pdf.set_text_color(*_DARK)
+                pdf.cell(_cw, 6, f" {_v}", border=1, fill=True,
+                         align="C" if _i != 1 else "L")
+            pdf.ln()
+
+            # Lignes EC (indentées, fond blanc, normal)
+            pdf.set_fill_color(*_WHITE)
+            pdf.set_font("Helvetica", "", 7.5)
+            for cn, ec in sorted(ue["courses"].items()):
+                ne  = ec["avg20"]
+                nec = _GREEN if ne >= 10 else _RED
+                _row_ec = [
+                    "—",
+                    _truncate(f"  {cn}", 38),
+                    f"{ec['credits_ec']:.0f}",
+                    "—",
+                    f"{ne:.2f}",
+                    "—",
+                    "—",
+                ]
+                for _i, (_v, _cw) in enumerate(zip(_row_ec, _CW)):
+                    if _i == 4:
+                        pdf.set_text_color(*nec)
+                    else:
+                        pdf.set_text_color(*_GRAY if _i != 1 else _DARK)
+                    pdf.cell(_cw, 5.5, f" {_v}" if _i != 1 else _v, border=1,
+                             fill=True, align="C" if _i != 1 else "L")
+                pdf.ln()
+                pdf.set_text_color(*_DARK)
+
+    # ── Lignes de synthèse par groupe ──────────────────────────────────────────
+    pdf.set_fill_color(*_LIGHT)
+    pdf.set_font("Helvetica", "B", 8)
+    for glabel in sorted(by_group.keys()):
+        gavg  = group_avgs.get(glabel, 0)
+        gc    = _GREEN if gavg >= 10 else _RED
+        _lbl  = f"  Moyenne Groupe {glabel}"
+        # span 5 cols then note then empty dec
+        pdf.set_text_color(*_DARK)
+        _span = sum(_CW[:5])
+        pdf.cell(_span, 6, _lbl, border=1, fill=True, align="R")
+        pdf.set_text_color(*gc)
+        pdf.cell(_CW[5], 6, f" {gavg:.2f}", border=1, fill=True, align="C")
+        pdf.set_text_color(*_DARK)
+        pdf.cell(_CW[6], 6, "", border=1, fill=True)
+        pdf.ln()
+
+    # Ligne totale
+    _fc  = _GREEN if final_decision == "VAL" else _RED
+    _tac = _GREEN if total_avg >= 10 else _RED
+    pdf.set_fill_color(220, 230, 255)
+    pdf.set_font("Helvetica", "B", 8)
+    _lbl = f"  Moy. Totale  |  {ecs_a_reprendre} EC à reprendre  |  Crédits : {obtained_credits:.0f}/{total_ue_credits:.0f}"
+    _span = sum(_CW[:5])
+    pdf.set_text_color(*_DARK)
+    pdf.cell(_span, 7, _lbl, border=1, fill=True, align="R")
+    pdf.set_text_color(*_tac)
+    pdf.cell(_CW[5], 7, f" {total_avg:.2f}", border=1, fill=True, align="C")
+    pdf.set_text_color(*_fc)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(_CW[6], 7, f" {final_decision}", border=1, fill=True, align="C")
+    pdf.ln()
+
+    # ── Pied de page ───────────────────────────────────────────────────────────
+    pdf.ln(8)
+    pdf.set_draw_color(*_BLUE)
+    pdf.line(12, pdf.get_y(), 198, pdf.get_y())
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(*_GRAY)
+    pdf.cell(W, 5,
+             f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')} · UniSchedule",
+             align="C")
+
+    return bytes(pdf.output())

@@ -909,18 +909,21 @@ def render_admin_departement():
 
     # ── COURS ─────────────────────────────────────────────────────────────────
     with tabs[2]:
+        from db.queries import UEQueries as _UQT
         try:
-            courses = CourseQueries.get_by_department(dept_id)
+            courses   = CourseQueries.get_by_department(dept_id)
+            _ues_list = _UQT.get_by_department(dept_id) or []
         except Exception as e:
             st.error(f"Erreur : {e}"); return
 
-        total_h = sum(c.get("hours",0) for c in courses)
-        c1, c2 = st.columns(2)
-        c1.metric("Cours", len(courses))
-        c2.metric("Volume horaire total", f"{total_h}h")
+        total_h = sum(c.get("hours", 0) for c in courses)
+        _cm1, _cm2, _cm3 = st.columns(3)
+        _cm1.metric("Cours (EC)", len(courses))
+        _cm2.metric("UEs définies", len(_ues_list))
+        _cm3.metric("Volume horaire", f"{total_h}h")
         st.divider()
 
-        with st.expander("➕ Ajouter un cours"):
+        with st.expander("➕ Ajouter un cours (EC)"):
             with st.form("add_course"):
                 name   = st.text_input("Intitulé *")
                 code   = st.text_input("Code (ex: INF301)")
@@ -936,18 +939,54 @@ def render_admin_departement():
                         st.error("Intitulé obligatoire.")
 
         for course in courses:
-            with st.expander(f"📘 {course['name']} ({course.get('code','—')})"):
+            _ue_tag = (f" — {course.get('ue_code','')} {course.get('ue_name','')}"
+                       if course.get("ue_name") else "")
+            with st.expander(
+                f"📘 {course['name']} ({course.get('code','—')}){_ue_tag}"
+            ):
                 with st.form(f"edit_course_{course['id']}"):
-                    nn = st.text_input("Intitulé",   value=course["name"])
-                    nc = st.text_input("Code",        value=course.get("code",""))
-                    nh = st.number_input("Heures",    value=course.get("hours",0), min_value=0)
-                    nw = st.number_input("Coefficient", value=float(course.get("weight",1.0)),
-                                         min_value=0.5, step=0.5)
+                    nn = st.text_input("Intitulé",    value=course["name"])
+                    nc = st.text_input("Code",         value=course.get("code",""))
+                    _hcol, _wcol = st.columns(2)
+                    nh = _hcol.number_input("Heures",  value=course.get("hours",0), min_value=0)
+                    nw = _wcol.number_input("Coefficient",
+                                            value=float(course.get("weight",1.0)),
+                                            min_value=0.5, step=0.5)
+                    # ── Affectation UE ──────────────────────────────────────
+                    _ue_opts = [None] + _ues_list
+                    _ue_cur  = next(
+                        (i + 1 for i, u in enumerate(_ues_list)
+                         if u["id"] == course.get("ue_id")), 0
+                    )
+                    _ucol, _ccol = st.columns([3, 1])
+                    _sel_ue = _ucol.selectbox(
+                        "Unité d'Enseignement (UE)",
+                        _ue_opts, index=_ue_cur,
+                        format_func=lambda u: (
+                            "— Sans UE —" if u is None
+                            else f"[{u.get('group_label','?')}] "
+                                 f"{u.get('code','')} {u['name']}"
+                        ),
+                        key=f"ue_sel_{course['id']}"
+                    )
+                    _cred_ec = _ccol.number_input(
+                        "Crédits EC",
+                        value=float(course.get("credits_ec") or 1.0),
+                        min_value=0.5, step=0.5,
+                        key=f"cred_ec_{course['id']}"
+                    )
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.form_submit_button("💾 Sauvegarder"):
                             try:
-                                CourseQueries.update(course["id"],nn,nc,int(nh),float(nw))
+                                CourseQueries.update(course["id"], nn, nc,
+                                                     int(nh), float(nw))
+                                if _sel_ue:
+                                    _UQT.assign_course(course["id"],
+                                                       _sel_ue["id"],
+                                                       float(_cred_ec))
+                                else:
+                                    _UQT.unassign_course(course["id"])
                                 st.success("✅ Cours mis à jour !"); st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur : {e}")
@@ -958,6 +997,76 @@ def render_admin_departement():
                                 st.success("✅ Cours supprimé."); st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur : {e}")
+
+        # ── Gestion des UE ────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("#### 🎓 Unités d'Enseignement (UE)")
+        st.caption(
+            "Une UE regroupe plusieurs cours (EC). "
+            "La note UE = moyenne pondérée des notes EC par leurs crédits. "
+            "Le groupe (A, B…) sert au calcul des moyennes par groupe."
+        )
+
+        with st.expander("➕ Créer une UE"):
+            with st.form("create_ue_form"):
+                _unew_c1, _unew_c2, _unew_c3 = st.columns([2, 1, 1])
+                _unew_name    = st.text_input("Intitulé * (ex: PHYSIOTHÉRAPIE 1)")
+                _unew_code    = _unew_c1.text_input("Code (ex: PHY 101)")
+                _unew_group   = _unew_c2.selectbox("Groupe", ["A","B","C","D","E","F"])
+                _unew_credits = _unew_c3.number_input("Crédits UE", min_value=0.0,
+                                                       max_value=50.0, value=0.0, step=0.5)
+                if st.form_submit_button("✅ Créer", type="primary"):
+                    if _unew_name.strip():
+                        try:
+                            _UQT.create(dept_id, _unew_name.strip(),
+                                        _unew_code.strip() or None,
+                                        float(_unew_credits), _unew_group)
+                            st.success(f"✅ UE '{_unew_name.strip()}' créée !")
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(f"Erreur : {_e}")
+                    else:
+                        st.error("L'intitulé est obligatoire.")
+
+        _GROUPS_CLR = {"A":"#2563EB","B":"#7C3AED","C":"#059669",
+                       "D":"#D97706","E":"#DC2626","F":"#0891B2"}
+        for _ue in _ues_list:
+            _g_clr = _GROUPS_CLR.get(_ue.get("group_label","A"), "#64748B")
+            _ec_n  = int(_ue.get("ec_count") or 0)
+            with st.expander(
+                f"🎓 [{_ue.get('group_label','?')}] "
+                f"{_ue.get('code','')} — {_ue['name']} "
+                f"· {int(_ue.get('credits',0))} crédits · {_ec_n} EC"
+            ):
+                with st.form(f"edit_ue_{_ue['id']}"):
+                    _eu_n = st.text_input("Intitulé", value=_ue["name"])
+                    _eu_c1, _eu_c2, _eu_c3 = st.columns([2, 1, 1])
+                    _eu_code    = _eu_c1.text_input("Code", value=_ue.get("code",""))
+                    _eu_group   = _eu_c2.selectbox(
+                        "Groupe", ["A","B","C","D","E","F"],
+                        index=(["A","B","C","D","E","F"].index(_ue.get("group_label","A"))
+                               if _ue.get("group_label") in ["A","B","C","D","E","F"] else 0)
+                    )
+                    _eu_credits = _eu_c3.number_input(
+                        "Crédits", value=float(_ue.get("credits") or 0),
+                        min_value=0.0, step=0.5
+                    )
+                    _eu_b1, _eu_b2 = st.columns(2)
+                    with _eu_b1:
+                        if st.form_submit_button("💾 Sauvegarder"):
+                            try:
+                                _UQT.update(_ue["id"], _eu_n, _eu_code,
+                                            float(_eu_credits), _eu_group)
+                                st.success("✅ UE mise à jour !"); st.rerun()
+                            except Exception as _e:
+                                st.error(f"Erreur : {_e}")
+                    with _eu_b2:
+                        if st.form_submit_button("🗑️ Supprimer"):
+                            try:
+                                _UQT.delete(_ue["id"])
+                                st.success("✅ UE supprimée."); st.rerun()
+                            except Exception as _e:
+                                st.error(f"Erreur : {_e}")
 
     # ── PROFESSEURS ───────────────────────────────────────────────────────────
     with tabs[3]:
@@ -2804,6 +2913,82 @@ def render_admin_departement():
                                 mime=("application/vnd.openxmlformats-officedocument"
                                       ".spreadsheetml.sheet"),
                                 use_container_width=True,
+                            )
+
+                        # ── Calcul résultats par UE ───────────────────────────
+                        _has_ue_r = any(g.get("ue_id") for g in grades_res)
+                        if _has_ue_r:
+                            st.divider()
+                            st.markdown("##### 🎓 Résultats par Unité d'Enseignement")
+                            _thr_ue_r = st.slider(
+                                "Seuil validation UE (≥ X/20)",
+                                min_value=5.0, max_value=15.0,
+                                value=10.0, step=0.5,
+                                key="res_thr_ue"
+                            )
+                            if st.button("🎓 Calculer les résultats UE",
+                                         key="btn_ue_calc", type="primary"):
+                                from db.queries import StudentUEResultsQueries as _SURQ2
+                                _by_stu_ue = {}
+                                for _g in grades_res:
+                                    _sid = _g["student_id"]
+                                    _uid = _g.get("ue_id")
+                                    if not _uid:
+                                        continue
+                                    _by_stu_ue.setdefault(_sid, {})
+                                    if _uid not in _by_stu_ue[_sid]:
+                                        _by_stu_ue[_sid][_uid] = {
+                                            "ue_credits": float(_g.get("ue_credits") or 0),
+                                            "ec": {},
+                                        }
+                                    _cid = _g["course_id"]
+                                    _by_stu_ue[_sid][_uid]["ec"].setdefault(
+                                        _cid, {
+                                            "credits_ec": float(_g.get("credits_ec") or 1),
+                                            "exams": [],
+                                        }
+                                    )
+                                    _norm_g = (_g["grade"] / _g["max_grade"] * 20
+                                               if _g.get("max_grade") else 0)
+                                    _by_stu_ue[_sid][_uid]["ec"][_cid]["exams"].append(_norm_g)
+
+                                _acad_yr_ue = (promo_res.get("academic_year","")
+                                               if promo_res else "")
+                                _n_ue_saved = 0
+                                for _sid, _ue_dict in _by_stu_ue.items():
+                                    for _uid, _ue_d in _ue_dict.items():
+                                        _tw = _twg = 0
+                                        for _ec in _ue_d["ec"].values():
+                                            _ea = (sum(_ec["exams"]) / len(_ec["exams"])
+                                                   if _ec["exams"] else 0)
+                                            _tw  += _ec["credits_ec"]
+                                            _twg += _ea * _ec["credits_ec"]
+                                        _note_ue = _twg / _tw if _tw > 0 else 0
+                                        _dec_ue  = "V" if _note_ue >= _thr_ue_r else "NV"
+                                        _cred_obt = (_ue_d["ue_credits"]
+                                                     if _dec_ue == "V" else 0)
+                                        try:
+                                            _SURQ2.upsert(
+                                                student_id       = _sid,
+                                                ue_id            = _uid,
+                                                session_name     = active_session_res,
+                                                academic_year    = _acad_yr_ue,
+                                                note_ue          = round(_note_ue, 2),
+                                                credits_obtained = _cred_obt,
+                                                decision         = _dec_ue,
+                                                computed_by      = user["id"],
+                                            )
+                                            _n_ue_saved += 1
+                                        except Exception:
+                                            pass
+                                st.success(
+                                    f"✅ {_n_ue_saved} résultat(s) UE enregistré(s)."
+                                )
+                                st.rerun()
+                        else:
+                            st.caption(
+                                "💡 Assignez vos cours à des UE (onglet **Cours**) "
+                                "pour activer les résultats par unité d'enseignement."
                             )
 
     # ══════════════════════════════════════════════════════════════════════════

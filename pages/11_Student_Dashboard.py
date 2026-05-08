@@ -495,162 +495,439 @@ with tab_bulletin:
             if not bulletin_grades:
                 st.info("Aucune note disponible pour cette session.")
             else:
-                # Agréger par cours
-                by_course_b = {}
-                for g in bulletin_grades:
-                    cn = g["course_name"]
-                    if cn not in by_course_b:
-                        by_course_b[cn] = {
-                            "weight": float(g.get("course_weight") or 1.0),
-                            "exams": [],
-                        }
-                    norm = (g["grade"] / g["max_grade"] * 20
-                            if g.get("max_grade") else 0.0)
-                    by_course_b[cn]["exams"].append({
-                        "type": g["exam_type"],
-                        "grade": g["grade"],
-                        "max": g["max_grade"],
-                        "norm": norm,
-                        "comment": g.get("comment"),
-                        "prof": g.get("professor_name", "—"),
-                    })
+                _has_ue_struct = any(g.get("ue_id") for g in bulletin_grades)
 
-                for cn, data in by_course_b.items():
-                    exs = data["exams"]
-                    data["avg20"] = sum(e["norm"] for e in exs) / len(exs)
+                # ══════════════════════════════════════════════════════════════
+                # MODE UE/EC — format bulletin académique structuré
+                # ══════════════════════════════════════════════════════════════
+                if _has_ue_struct:
+                    from collections import defaultdict as _ddict
 
-                total_w_b = sum(d["weight"] for d in by_course_b.values())
-                overall_avg = (
-                    sum(d["avg20"] * d["weight"] for d in by_course_b.values())
-                    / total_w_b if total_w_b > 0 else 0.0
-                )
+                    # ── Construire ue_map et no_ue_courses ────────────────────
+                    ue_map = {}
+                    no_ue_courses = {}
+                    for g in bulletin_grades:
+                        norm = (float(g["grade"]) / float(g["max_grade"]) * 20
+                                if g.get("max_grade") else 0.0)
+                        if g.get("ue_id"):
+                            uk = g["ue_id"]
+                            if uk not in ue_map:
+                                ue_map[uk] = {
+                                    "ue_id":      g["ue_id"],
+                                    "ue_name":    g.get("ue_name", ""),
+                                    "ue_code":    g.get("ue_code", ""),
+                                    "ue_credits": float(g.get("ue_credits") or 0),
+                                    "ue_group":   g.get("ue_group", "A"),
+                                    "courses":    {},
+                                }
+                            cn = g["course_name"]
+                            if cn not in ue_map[uk]["courses"]:
+                                ue_map[uk]["courses"][cn] = {
+                                    "credits_ec": float(g.get("credits_ec") or 1),
+                                    "exams": [],
+                                }
+                            ue_map[uk]["courses"][cn]["exams"].append({
+                                "type":  g["exam_type"],
+                                "grade": float(g["grade"] or 0),
+                                "max":   float(g["max_grade"] or 20),
+                                "norm":  norm,
+                                "comment": g.get("comment"),
+                                "prof":    g.get("professor_name", "—"),
+                            })
+                        else:
+                            cn = g["course_name"]
+                            if cn not in no_ue_courses:
+                                no_ue_courses[cn] = {
+                                    "weight": float(g.get("course_weight") or 1),
+                                    "exams": [],
+                                }
+                            no_ue_courses[cn]["exams"].append({
+                                "type":  g["exam_type"],
+                                "grade": float(g["grade"] or 0),
+                                "max":   float(g["max_grade"] or 20),
+                                "norm":  norm,
+                                "comment": g.get("comment"),
+                                "prof":    g.get("professor_name", "—"),
+                            })
 
-                # Rang dans la classe
-                try:
-                    rank_val = GradeQueries.get_class_rank(
-                        student["id"], class_id, selected_session
+                    # ── Calculs UE ────────────────────────────────────────────
+                    for ue in ue_map.values():
+                        for ec in ue["courses"].values():
+                            exams = ec["exams"]
+                            ec["avg20"] = (sum(e["norm"] for e in exams) / len(exams)
+                                           if exams else 0.0)
+                        total_cred = sum(ec["credits_ec"] for ec in ue["courses"].values())
+                        ue["note_ue"] = (
+                            sum(ec["avg20"] * ec["credits_ec"]
+                                for ec in ue["courses"].values()) / total_cred
+                            if total_cred > 0 else 0.0
+                        )
+                        ue["decision"]         = "V" if ue["note_ue"] >= 10.0 else "NV"
+                        ue["credits_obtained"] = ue["ue_credits"] if ue["decision"] == "V" else 0.0
+
+                    # ── Groupes ───────────────────────────────────────────────
+                    by_group = _ddict(list)
+                    for ue in ue_map.values():
+                        by_group[ue["ue_group"]].append(ue)
+
+                    group_avgs = {}
+                    for glabel, ues in by_group.items():
+                        total_uc = sum(u["ue_credits"] for u in ues)
+                        group_avgs[glabel] = (
+                            sum(u["note_ue"] * u["ue_credits"] for u in ues) / total_uc
+                            if total_uc > 0 else 0.0
+                        )
+
+                    total_ue_credits  = sum(u["ue_credits"] for u in ue_map.values())
+                    obtained_credits  = sum(u["credits_obtained"] for u in ue_map.values())
+                    total_avg = (
+                        sum(u["note_ue"] * u["ue_credits"] for u in ue_map.values())
+                        / total_ue_credits if total_ue_credits > 0 else 0.0
                     )
-                except Exception:
-                    rank_val = None
-
-                # ── En-tête du bulletin ───────────────────────────────────────
-                men_label = _mention_label(overall_avg)
-                men_color = _mention_color(overall_avg)
-                rank_html = (
-                    f"<div><div style='font-size:0.75rem;color:#94A3B8'>Rang</div>"
-                    f"<div style='font-size:1.2rem;font-weight:600;color:#1E293B'>"
-                    f"{rank_val}</div></div>"
-                    if rank_val is not None else ""
-                )
-
-                # Décision officielle enregistrée par le département
-                try:
-                    _dec_row = StudentResultsQueries.get_by_student_session(
-                        student["id"], selected_session
+                    all_validated  = all(u["decision"] == "V" for u in ue_map.values())
+                    final_decision = "VAL" if all_validated else "NVAL"
+                    ecs_a_reprendre = sum(
+                        1 for ue in ue_map.values()
+                        for ec in ue["courses"].values()
+                        if ec["avg20"] < 10.0
                     )
-                    _decision_val = (_dec_row.get("decision") if _dec_row else None)
-                except Exception:
-                    _decision_val = None
 
-                _DEC_CFG = {
-                    "Admis":     ("✅", "#059669", "#D1FAE5"),
-                    "Session 2": ("⚠️", "#D97706", "#FEF3C7"),
-                    "Ajourné":   ("❌", "#DC2626", "#FEE2E2"),
-                }
-                _dec_icon, _dec_clr, _dec_bg = _DEC_CFG.get(
-                    _decision_val, ("", "#64748B", "#F1F5F9")
-                )
-                _decision_html = (
-                    f"<div style='margin-left:auto'>"
-                    f"<div style='font-size:0.75rem;color:#94A3B8'>Décision officielle</div>"
-                    f"<div style='background:{_dec_bg};color:{_dec_clr};"
-                    f"padding:4px 14px;border-radius:20px;font-weight:700;"
-                    f"font-size:1rem;display:inline-block;margin-top:2px'>"
-                    f"{_dec_icon} {_decision_val}</div></div>"
-                ) if _decision_val else ""
+                    # ── Rang & décision officielle ────────────────────────────
+                    try:
+                        rank_val = GradeQueries.get_class_rank(
+                            student["id"], class_id, selected_session)
+                    except Exception:
+                        rank_val = None
+                    try:
+                        _dec_row    = StudentResultsQueries.get_by_student_session(
+                            student["id"], selected_session)
+                        _decision_val = _dec_row.get("decision") if _dec_row else None
+                    except Exception:
+                        _decision_val = None
 
-                st.markdown(f"""
-                <div style="background:linear-gradient(135deg,{men_color}22,{men_color}11);
-                            border:1px solid {men_color}44;border-radius:12px;
-                            padding:1rem 1.5rem;margin-bottom:1rem">
-                    <div style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem">
-                        Session : <strong>{selected_session}</strong>
-                    </div>
-                    <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap">
-                        <div>
-                            <div style="font-size:0.75rem;color:#94A3B8">Moyenne générale</div>
-                            <div style="font-size:2rem;font-weight:700;color:{men_color}">
-                                {overall_avg:.2f}
-                                <span style="font-size:1rem;color:#94A3B8">/20</span>
-                            </div>
+                    # ── En-tête ───────────────────────────────────────────────
+                    men_label = _mention_label(total_avg)
+                    men_color = _mention_color(total_avg)
+                    _DEC_CFG  = {
+                        "Admis":     ("✅", "#059669", "#D1FAE5"),
+                        "Session 2": ("⚠️", "#D97706", "#FEF3C7"),
+                        "Ajourné":   ("❌", "#DC2626", "#FEE2E2"),
+                    }
+                    _dec_icon, _dec_clr, _dec_bg = _DEC_CFG.get(
+                        _decision_val, ("", "#64748B", "#F1F5F9"))
+                    _decision_html = (
+                        f"<div style='margin-left:auto'>"
+                        f"<div style='font-size:0.75rem;color:#94A3B8'>Décision officielle</div>"
+                        f"<div style='background:{_dec_bg};color:{_dec_clr};"
+                        f"padding:4px 14px;border-radius:20px;font-weight:700;"
+                        f"font-size:1rem;display:inline-block;margin-top:2px'>"
+                        f"{_dec_icon} {_decision_val}</div></div>"
+                    ) if _decision_val else ""
+                    rank_html = (
+                        f"<div><div style='font-size:0.75rem;color:#94A3B8'>Rang</div>"
+                        f"<div style='font-size:1.2rem;font-weight:600;color:#1E293B'>"
+                        f"{rank_val}</div></div>"
+                    ) if rank_val is not None else ""
+
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg,{men_color}22,{men_color}11);
+                                border:1px solid {men_color}44;border-radius:12px;
+                                padding:1rem 1.5rem;margin-bottom:1rem">
+                        <div style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem">
+                            Session : <strong>{selected_session}</strong>
                         </div>
-                        <div>
-                            <div style="font-size:0.75rem;color:#94A3B8">Mention</div>
-                            <div style="font-size:1.2rem;font-weight:600;color:{men_color}">
-                                {men_label}
+                        <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap">
+                            <div>
+                                <div style="font-size:0.75rem;color:#94A3B8">Moyenne générale</div>
+                                <div style="font-size:2rem;font-weight:700;color:{men_color}">
+                                    {total_avg:.2f}
+                                    <span style="font-size:1rem;color:#94A3B8">/20</span>
+                                </div>
                             </div>
+                            <div>
+                                <div style="font-size:0.75rem;color:#94A3B8">Mention</div>
+                                <div style="font-size:1.2rem;font-weight:600;color:{men_color}">
+                                    {men_label}
+                                </div>
+                            </div>
+                            {rank_html}
+                            {_decision_html}
                         </div>
-                        {rank_html}
-                        {_decision_html}
                     </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
 
-                st.divider()
+                    # ── Tableau UE/EC ─────────────────────────────────────────
+                    _S_TH  = ("padding:6px 8px;border:1px solid #CBD5E1;"
+                               "background:#1E40AF;color:white;font-size:0.78rem;text-align:center")
+                    _S_UE  = ("padding:5px 8px;border:1px solid #CBD5E1;"
+                               "background:#EFF6FF;font-weight:600;font-size:0.82rem")
+                    _S_EC  = ("padding:4px 8px;border:1px solid #E2E8F0;"
+                               "background:#F8FAFC;font-size:0.78rem;color:#475569")
+                    _S_SUM = ("padding:6px 8px;border:1px solid #CBD5E1;"
+                               "background:#F1F5F9;font-weight:600;font-size:0.8rem")
 
-                # ── Détail par cours ──────────────────────────────────────────
-                for cn, data in sorted(by_course_b.items()):
-                    avg_c = data["avg20"]
-                    with st.expander(
-                        f"📘 {cn}  —  {avg_c:.1f}/20 · {_mention_label(avg_c)}"
-                    ):
-                        for exam in data["exams"]:
-                            c_type, c_grade, c_comment = st.columns([2, 1, 3])
-                            c_type.markdown(
-                                f"**{exam['type']}**  \n"
-                                f"<span style='color:#94A3B8;font-size:0.78rem'>"
-                                f"Prof : {exam['prof']}</span>",
-                                unsafe_allow_html=True
+                    rows_html = ""
+                    for glabel in sorted(by_group.keys()):
+                        ues_g = sorted(by_group[glabel], key=lambda u: u.get("ue_code", ""))
+                        for ue in ues_g:
+                            nue   = ue["note_ue"]
+                            dec   = ue["decision"]
+                            nc    = "#059669" if nue >= 10 else "#DC2626"
+                            dc    = "#059669" if dec == "V" else "#DC2626"
+                            rows_html += (
+                                f"<tr>"
+                                f"<td style='{_S_UE};text-align:center'>{ue['ue_code'] or ''}</td>"
+                                f"<td style='{_S_UE}'>{ue['ue_name']}</td>"
+                                f"<td style='{_S_UE};text-align:center'>—</td>"
+                                f"<td style='{_S_UE};text-align:center'>{ue['ue_credits']:.0f}</td>"
+                                f"<td style='{_S_UE};text-align:center'>—</td>"
+                                f"<td style='{_S_UE};text-align:center;color:{nc}'>{nue:.2f}</td>"
+                                f"<td style='{_S_UE};text-align:center;color:{dc};font-weight:700'>{dec}</td>"
+                                f"</tr>"
                             )
-                            c_grade.markdown(
-                                f"<div style='font-size:1.4rem;font-weight:700;"
-                                f"color:{_mention_color(exam['norm'])}'>"
-                                f"{exam['grade']:.1f}"
-                                f"<span style='font-size:0.75rem;color:#94A3B8'>"
-                                f"/{exam['max']:.0f}</span></div>",
-                                unsafe_allow_html=True
-                            )
-                            if exam.get("comment"):
-                                c_comment.caption(f"💬 {exam['comment']}")
+                            for cn, ec in sorted(ue["courses"].items()):
+                                ne  = ec["avg20"]
+                                nce = "#059669" if ne >= 10 else "#DC2626"
+                                rows_html += (
+                                    f"<tr>"
+                                    f"<td style='{_S_EC};text-align:center'>—</td>"
+                                    f"<td style='{_S_EC};padding-left:1.8rem'>↳ {cn}</td>"
+                                    f"<td style='{_S_EC};text-align:center'>{ec['credits_ec']:.0f}</td>"
+                                    f"<td style='{_S_EC};text-align:center'>—</td>"
+                                    f"<td style='{_S_EC};text-align:center;color:{nce}'>{ne:.2f}</td>"
+                                    f"<td style='{_S_EC};text-align:center'>—</td>"
+                                    f"<td style='{_S_EC};text-align:center'>—</td>"
+                                    f"</tr>"
+                                )
 
-                # ── Export PDF du bulletin ────────────────────────────────────
-                st.divider()
-                try:
-                    from utils.pdf_export import generate_bulletin_pdf
-                    from db.queries import ClassQueries as _ClsQ
-                    _cls_info = _ClsQ.get_by_id(class_id)
-                    _pdf_bul = generate_bulletin_pdf(
-                        student_name=_display_name,
-                        student_number=student["student_number"],
-                        class_name=_cls_info["name"] if _cls_info else "—",
-                        promotion_name=_cls_info.get("promotion_name","—") if _cls_info else "—",
-                        university_name=_cls_info.get("university_name","UniSchedule") if _cls_info else "UniSchedule",
-                        session_name=selected_session,
-                        grades_by_course=by_course_b,
-                        overall_avg=overall_avg,
-                        mention=men_label,
-                        rank=rank_val,
+                    sum_rows = ""
+                    for glabel in sorted(by_group.keys()):
+                        gavg  = group_avgs.get(glabel, 0)
+                        gc    = "#059669" if gavg >= 10 else "#DC2626"
+                        sum_rows += (
+                            f"<tr>"
+                            f"<td colspan='5' style='{_S_SUM};text-align:right'>"
+                            f"Moyenne Groupe {glabel} :</td>"
+                            f"<td style='{_S_SUM};text-align:center;color:{gc}'>{gavg:.2f}</td>"
+                            f"<td style='{_S_SUM}'></td>"
+                            f"</tr>"
+                        )
+                    _fc  = "#059669" if final_decision == "VAL" else "#DC2626"
+                    _tac = "#059669" if total_avg >= 10 else "#DC2626"
+                    sum_rows += (
+                        f"<tr>"
+                        f"<td colspan='2' style='{_S_SUM}'>Moyenne Totale</td>"
+                        f"<td style='{_S_SUM};text-align:center'>{ecs_a_reprendre} EC à reprendre</td>"
+                        f"<td style='{_S_SUM};text-align:center'>{obtained_credits:.0f}/{total_ue_credits:.0f} crédits</td>"
+                        f"<td style='{_S_SUM}'></td>"
+                        f"<td style='{_S_SUM};text-align:center;color:{_tac}'>{total_avg:.2f}</td>"
+                        f"<td style='{_S_SUM};text-align:center;color:{_fc};font-size:1rem'>{final_decision}</td>"
+                        f"</tr>"
                     )
-                    st.download_button(
-                        "📄 Télécharger le bulletin PDF",
-                        data=_pdf_bul,
-                        file_name=f"bulletin_{student['student_number']}_{selected_session}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        type="primary",
+
+                    st.markdown(
+                        f"""<div style="overflow-x:auto;margin:1rem 0">
+                        <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
+                            <thead><tr>
+                                <th style="{_S_TH};width:70px">Code UE</th>
+                                <th style="{_S_TH}">Intitulés UE / EC</th>
+                                <th style="{_S_TH};width:70px">Crédits EC</th>
+                                <th style="{_S_TH};width:70px">Crédits UE</th>
+                                <th style="{_S_TH};width:80px">Note EC /20</th>
+                                <th style="{_S_TH};width:80px">Note UE /20</th>
+                                <th style="{_S_TH};width:70px">Décision</th>
+                            </tr></thead>
+                            <tbody>{rows_html}{sum_rows}</tbody>
+                        </table></div>""",
+                        unsafe_allow_html=True,
                     )
-                except Exception as _e:
-                    st.caption(f"Export PDF indisponible : {_e}")
+
+                    # ── Export PDF UE ─────────────────────────────────────────
+                    st.divider()
+                    try:
+                        from utils.pdf_export import generate_bulletin_pdf_ue
+                        from db.queries import ClassQueries as _ClsQ
+                        _cls_info = _ClsQ.get_by_id(class_id)
+                        _pdf_bul  = generate_bulletin_pdf_ue(
+                            student_name=_display_name,
+                            student_number=student["student_number"],
+                            class_name=_cls_info["name"] if _cls_info else "—",
+                            promotion_name=_cls_info.get("promotion_name","—") if _cls_info else "—",
+                            university_name=_cls_info.get("university_name","UniSchedule") if _cls_info else "UniSchedule",
+                            session_name=selected_session,
+                            ue_map=ue_map,
+                            by_group=dict(by_group),
+                            group_avgs=group_avgs,
+                            total_avg=total_avg,
+                            obtained_credits=obtained_credits,
+                            total_ue_credits=total_ue_credits,
+                            ecs_a_reprendre=ecs_a_reprendre,
+                            final_decision=final_decision,
+                            mention=men_label,
+                            rank=rank_val,
+                        )
+                        st.download_button(
+                            "📄 Télécharger le bulletin PDF (format UE)",
+                            data=_pdf_bul,
+                            file_name=f"bulletin_ue_{student['student_number']}_{selected_session}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            type="primary",
+                        )
+                    except Exception as _e:
+                        st.caption(f"Export PDF indisponible : {_e}")
+
+                # ══════════════════════════════════════════════════════════════
+                # MODE PAR COURS — affichage classique (pas de structure UE)
+                # ══════════════════════════════════════════════════════════════
+                else:
+                    by_course_b = {}
+                    for g in bulletin_grades:
+                        cn = g["course_name"]
+                        if cn not in by_course_b:
+                            by_course_b[cn] = {
+                                "weight": float(g.get("course_weight") or 1.0),
+                                "exams": [],
+                            }
+                        norm = (g["grade"] / g["max_grade"] * 20
+                                if g.get("max_grade") else 0.0)
+                        by_course_b[cn]["exams"].append({
+                            "type": g["exam_type"],
+                            "grade": g["grade"],
+                            "max":   g["max_grade"],
+                            "norm":  norm,
+                            "comment": g.get("comment"),
+                            "prof":    g.get("professor_name", "—"),
+                        })
+
+                    for cn, data in by_course_b.items():
+                        exs = data["exams"]
+                        data["avg20"] = sum(e["norm"] for e in exs) / len(exs)
+
+                    total_w_b   = sum(d["weight"] for d in by_course_b.values())
+                    overall_avg = (
+                        sum(d["avg20"] * d["weight"] for d in by_course_b.values())
+                        / total_w_b if total_w_b > 0 else 0.0
+                    )
+
+                    try:
+                        rank_val = GradeQueries.get_class_rank(
+                            student["id"], class_id, selected_session)
+                    except Exception:
+                        rank_val = None
+
+                    men_label = _mention_label(overall_avg)
+                    men_color = _mention_color(overall_avg)
+                    rank_html = (
+                        f"<div><div style='font-size:0.75rem;color:#94A3B8'>Rang</div>"
+                        f"<div style='font-size:1.2rem;font-weight:600;color:#1E293B'>"
+                        f"{rank_val}</div></div>"
+                        if rank_val is not None else ""
+                    )
+
+                    try:
+                        _dec_row = StudentResultsQueries.get_by_student_session(
+                            student["id"], selected_session)
+                        _decision_val = _dec_row.get("decision") if _dec_row else None
+                    except Exception:
+                        _decision_val = None
+
+                    _DEC_CFG = {
+                        "Admis":     ("✅", "#059669", "#D1FAE5"),
+                        "Session 2": ("⚠️", "#D97706", "#FEF3C7"),
+                        "Ajourné":   ("❌", "#DC2626", "#FEE2E2"),
+                    }
+                    _dec_icon, _dec_clr, _dec_bg = _DEC_CFG.get(
+                        _decision_val, ("", "#64748B", "#F1F5F9"))
+                    _decision_html = (
+                        f"<div style='margin-left:auto'>"
+                        f"<div style='font-size:0.75rem;color:#94A3B8'>Décision officielle</div>"
+                        f"<div style='background:{_dec_bg};color:{_dec_clr};"
+                        f"padding:4px 14px;border-radius:20px;font-weight:700;"
+                        f"font-size:1rem;display:inline-block;margin-top:2px'>"
+                        f"{_dec_icon} {_decision_val}</div></div>"
+                    ) if _decision_val else ""
+
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg,{men_color}22,{men_color}11);
+                                border:1px solid {men_color}44;border-radius:12px;
+                                padding:1rem 1.5rem;margin-bottom:1rem">
+                        <div style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem">
+                            Session : <strong>{selected_session}</strong>
+                        </div>
+                        <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap">
+                            <div>
+                                <div style="font-size:0.75rem;color:#94A3B8">Moyenne générale</div>
+                                <div style="font-size:2rem;font-weight:700;color:{men_color}">
+                                    {overall_avg:.2f}
+                                    <span style="font-size:1rem;color:#94A3B8">/20</span>
+                                </div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.75rem;color:#94A3B8">Mention</div>
+                                <div style="font-size:1.2rem;font-weight:600;color:{men_color}">
+                                    {men_label}
+                                </div>
+                            </div>
+                            {rank_html}
+                            {_decision_html}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.divider()
+
+                    for cn, data in sorted(by_course_b.items()):
+                        avg_c = data["avg20"]
+                        with st.expander(
+                            f"📘 {cn}  —  {avg_c:.1f}/20 · {_mention_label(avg_c)}"
+                        ):
+                            for exam in data["exams"]:
+                                c_type, c_grade, c_comment = st.columns([2, 1, 3])
+                                c_type.markdown(
+                                    f"**{exam['type']}**  \n"
+                                    f"<span style='color:#94A3B8;font-size:0.78rem'>"
+                                    f"Prof : {exam['prof']}</span>",
+                                    unsafe_allow_html=True
+                                )
+                                c_grade.markdown(
+                                    f"<div style='font-size:1.4rem;font-weight:700;"
+                                    f"color:{_mention_color(exam['norm'])}'>"
+                                    f"{exam['grade']:.1f}"
+                                    f"<span style='font-size:0.75rem;color:#94A3B8'>"
+                                    f"/{exam['max']:.0f}</span></div>",
+                                    unsafe_allow_html=True
+                                )
+                                if exam.get("comment"):
+                                    c_comment.caption(f"💬 {exam['comment']}")
+
+                    st.divider()
+                    try:
+                        from utils.pdf_export import generate_bulletin_pdf
+                        from db.queries import ClassQueries as _ClsQ
+                        _cls_info = _ClsQ.get_by_id(class_id)
+                        _pdf_bul  = generate_bulletin_pdf(
+                            student_name=_display_name,
+                            student_number=student["student_number"],
+                            class_name=_cls_info["name"] if _cls_info else "—",
+                            promotion_name=_cls_info.get("promotion_name","—") if _cls_info else "—",
+                            university_name=_cls_info.get("university_name","UniSchedule") if _cls_info else "UniSchedule",
+                            session_name=selected_session,
+                            grades_by_course=by_course_b,
+                            overall_avg=overall_avg,
+                            mention=men_label,
+                            rank=rank_val,
+                        )
+                        st.download_button(
+                            "📄 Télécharger le bulletin PDF",
+                            data=_pdf_bul,
+                            file_name=f"bulletin_{student['student_number']}_{selected_session}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            type="primary",
+                        )
+                    except Exception as _e:
+                        st.caption(f"Export PDF indisponible : {_e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
