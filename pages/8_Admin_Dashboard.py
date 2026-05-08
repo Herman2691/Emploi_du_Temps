@@ -927,14 +927,38 @@ def render_admin_departement():
             with st.form("add_course"):
                 name   = st.text_input("Intitulé *")
                 code   = st.text_input("Code (ex: INF301)")
-                hours  = st.number_input("Heures", min_value=0, max_value=500, value=30)
-                weight = st.number_input("Coefficient", min_value=0.5, max_value=10.0,
-                                         value=1.0, step=0.5)
+                _hcol, _wcol = st.columns(2)
+                hours  = _hcol.number_input("Heures", min_value=0, max_value=500, value=30)
+                weight = _wcol.number_input("Coefficient", min_value=0.5, max_value=10.0,
+                                            value=1.0, step=0.5)
+                _ue_opts_add = [None] + _ues_list
+                _ucol_add, _ccol_add = st.columns([3, 1])
+                _sel_ue_add = _ucol_add.selectbox(
+                    "Unité d'Enseignement (UE)",
+                    _ue_opts_add,
+                    format_func=lambda u: (
+                        "— Sans UE —" if u is None
+                        else f"[{u.get('group_label','?')}] {u.get('code','')} {u['name']}"
+                    ),
+                    key="ue_sel_add",
+                )
+                _cred_ec_add = _ccol_add.number_input(
+                    "Crédits EC", value=1.0, min_value=0.5, step=0.5, key="cred_ec_add"
+                )
                 if st.form_submit_button("Créer", type="primary"):
                     if name.strip():
-                        CourseQueries.create(name.strip(), code.strip(),
-                                             int(hours), float(weight), dept_id)
-                        st.success("✅ Cours créé !"); st.rerun()
+                        try:
+                            new_course = CourseQueries.create(
+                                name.strip(), code.strip(),
+                                int(hours), float(weight), dept_id
+                            )
+                            if _sel_ue_add and new_course and new_course.get("id"):
+                                _UQT.assign_course(new_course["id"],
+                                                   _sel_ue_add["id"],
+                                                   float(_cred_ec_add))
+                            st.success("✅ Cours créé !"); st.rerun()
+                        except Exception as _ce:
+                            st.error(f"Erreur : {_ce}")
                     else:
                         st.error("Intitulé obligatoire.")
 
