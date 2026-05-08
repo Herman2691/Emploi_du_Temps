@@ -1607,7 +1607,7 @@ class AnalyticsQueries:
             SELECT
                 c.id                                                    AS course_id,
                 c.name                                                  AS course_name,
-                COALESCE(c.coefficient, 1)                             AS weight,
+                COALESCE(c.weight, 1)                                   AS weight,
                 p.name                                                  AS professor_name,
                 COUNT(DISTINCT g.student_id)                           AS nb_students,
                 ROUND(AVG(g.grade / NULLIF(g.max_grade,0) * 20)::NUMERIC, 2)    AS avg_20,
@@ -1619,7 +1619,7 @@ class AnalyticsQueries:
             JOIN professors p ON g.professor_id = p.id
             WHERE g.student_id IN (SELECT id FROM students WHERE class_id = %s)
               AND g.session_name = %s
-            GROUP BY c.id, c.name, c.coefficient, p.name
+            GROUP BY c.id, c.name, c.weight, p.name
             ORDER BY avg_20 DESC NULLS LAST
         """, (class_id, session_name))
 
