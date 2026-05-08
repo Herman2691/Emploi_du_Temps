@@ -9,31 +9,29 @@ logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def get_connection_pool():
-    try:
-        cfg = st.secrets["postgres"]
-        pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
-            host=cfg["host"],
-            port=int(cfg["port"]),
-            dbname=cfg["database"],
-            user=cfg["user"],
-            password=cfg["password"],
-            sslmode=cfg.get("sslmode", "disable"),
-            options="-c client_encoding=UTF8",
-            connect_timeout=10,
-        )
-        return pool
-    except Exception as e:
-        st.error(f"❌ Impossible de se connecter à la base de données : {e}")
-        return None
+    cfg = st.secrets["postgres"]
+    pool = psycopg2.pool.ThreadedConnectionPool(
+        minconn=1,
+        maxconn=10,
+        host=cfg["host"],
+        port=int(cfg["port"]),
+        dbname=cfg["database"],
+        user=cfg["user"],
+        password=cfg["password"],
+        sslmode=cfg.get("sslmode", "disable"),
+        options="-c client_encoding=UTF8",
+        connect_timeout=10,
+    )
+    return pool
 
 
 @contextmanager
 def get_db():
-    pool = get_connection_pool()
-    if pool is None:
-        raise ConnectionError("Pool de connexions non disponible.")
+    try:
+        pool = get_connection_pool()
+    except Exception as e:
+        st.error(f"❌ Impossible de se connecter à la base de données : {e}")
+        raise ConnectionError(f"Connexion impossible : {e}") from e
     conn = pool.getconn()
     try:
         conn.set_client_encoding("UTF8")

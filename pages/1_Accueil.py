@@ -1,4 +1,4 @@
-# pages/1_Accueil.py — Page d'accueil étudiant
+# pages/1_Accueil.py
 import streamlit as st
 from db.queries import UniversityQueries
 from utils.components import inject_global_css
@@ -7,127 +7,325 @@ inject_global_css()
 
 st.markdown("""
 <style>
-    /* Bannière hero */
-    .hero {
-        background: linear-gradient(135deg, #1E40AF 0%, #2563EB 60%, #0EA5E9 100%);
-        border-radius: 16px;
-        padding: 2.5rem 2rem;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .hero h1 { margin:0; font-family:'Poppins',sans-serif; font-size:2.2rem; font-weight:700; }
-    .hero p  { margin:0.4rem 0 0; opacity:0.88; font-size:1rem; }
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+.hero {
+    background: linear-gradient(135deg, #0A0F1E 0%, #0F172A 40%, #1A2744 70%, #0F2340 100%);
+    border-radius: 22px;
+    padding: 3.75rem 2.5rem;
+    color: white;
+    text-align: center;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+.hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+        radial-gradient(ellipse at 75% 45%, rgba(37,99,235,0.30) 0%, transparent 58%),
+        radial-gradient(ellipse at 20% 75%, rgba(16,185,129,0.18) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 10%, rgba(124,58,237,0.12) 0%, transparent 45%);
+    pointer-events: none;
+}
+.hero::after {
+    content: "";
+    position: absolute; inset: 0;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+    background-size: 28px 28px;
+    pointer-events: none;
+}
+.hero h1 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 2.9rem; font-weight: 800;
+    margin: 0; line-height: 1.12;
+    background: linear-gradient(135deg, #ffffff 20%, #93C5FD 70%, #A78BFA 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    position: relative; z-index: 1;
+}
+.hero .subtitle {
+    font-size: 1.05rem; opacity: 0.72;
+    margin: 0.85rem 0 0; max-width: 540px;
+    margin-left: auto; margin-right: auto;
+    line-height: 1.65; position: relative; z-index: 1;
+}
+.hero-badge {
+    display: inline-block;
+    background: rgba(37,99,235,0.25); border: 1px solid rgba(99,155,255,0.35);
+    border-radius: 30px; padding: 0.28rem 1rem;
+    font-size: 0.72rem; font-weight: 600;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    color: #93C5FD; margin-bottom: 1.3rem;
+    position: relative; z-index: 1;
+    backdrop-filter: blur(4px);
+}
 
-    /* Carte université */
-    .uni-card {
-        background: white;
-        border: 2px solid #E2E8F0;
-        border-radius: 14px;
-        overflow: hidden;
-        transition: all 0.2s ease;
-        cursor: pointer;
-    }
-    .uni-card:hover {
-        border-color: #2563EB;
-        box-shadow: 0 6px 24px rgba(37,99,235,0.15);
-        transform: translateY(-3px);
-    }
-    .uni-card img { width:100%; height:130px; object-fit:cover; }
-    .uni-card-body { padding: 0.9rem 1rem; }
-    .uni-card-body h4 { margin:0 0 0.25rem; color:#1E293B; font-size:0.95rem; font-weight:600; }
-    .uni-card-body p  { margin:0; color:#64748B; font-size:0.78rem; }
+/* ── Features ───────────────────────────────────────────────────────────── */
+.feature-card {
+    background: white;
+    border: 1px solid #E2E8F0;
+    border-radius: 14px;
+    padding: 1.5rem 1.25rem;
+    text-align: center;
+    height: 100%;
+    transition: all 0.2s ease;
+}
+.feature-card:hover {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    transform: translateY(-3px);
+    border-color: #BFDBFE;
+}
+.feature-card .icon {
+    font-size: 2.2rem; margin-bottom: 0.75rem;
+}
+.feature-card h4 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.95rem; font-weight: 700;
+    color: #1E293B; margin: 0 0 0.4rem;
+}
+.feature-card p {
+    font-size: 0.82rem; color: #64748B;
+    margin: 0; line-height: 1.55;
+}
 
-    /* Carte pub */
-    .pub-card {
-        background: linear-gradient(135deg, #F8FAFC, #EFF6FF);
-        border: 1px dashed #CBD5E1;
-        border-radius: 14px;
-        padding: 1.5rem;
-        text-align: center;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 0.75rem;
-    }
+/* ── Stats ──────────────────────────────────────────────────────────────── */
+.stats-bar {
+    background: linear-gradient(135deg, #1E40AF, #2563EB);
+    border-radius: 14px;
+    padding: 1.25rem 2rem;
+    display: flex; justify-content: space-around; align-items: center;
+    margin: 1.5rem 0;
+    flex-wrap: wrap; gap: 1rem;
+}
+.stat-item { text-align: center; color: white; }
+.stat-item .num {
+    font-family: 'Poppins', sans-serif;
+    font-size: 2rem; font-weight: 800; line-height: 1;
+}
+.stat-item .lbl { font-size: 0.78rem; opacity: 0.8; margin-top: 0.2rem; }
+
+/* ── Section title ───────────────────────────────────────────────────────── */
+.section-title {
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.3rem; font-weight: 700;
+    color: #1E293B; margin: 0 0 0.25rem;
+}
+.section-sub { color: #64748B; font-size: 0.875rem; margin: 0 0 1.25rem; }
+
+/* ── Carte université ────────────────────────────────────────────────────── */
+.uni-card {
+    background: white;
+    border: 1px solid #E2E8F0;
+    border-radius: 16px;
+    overflow: hidden;
+    transition: all 0.22s ease;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+.uni-card:hover {
+    box-shadow: 0 10px 32px rgba(0,0,0,0.11);
+    transform: translateY(-4px);
+    border-color: #BFDBFE;
+}
+.uni-card-cover {
+    width: 100%; height: 130px; object-fit: cover; display: block;
+}
+.uni-card-cover-fallback {
+    width: 100%; height: 130px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 3rem;
+}
+.uni-card-body { padding: 0.9rem 1.1rem 0.8rem; }
+.uni-card-body h4 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.92rem; font-weight: 700;
+    margin: 0 0 0.25rem; color: #1E293B; line-height: 1.3;
+}
+.uni-card-body p  { margin: 0; color: #64748B; font-size: 0.78rem; }
+.uni-color-bar { height: 4px; width: 100%; }
+
+/* ── CTA Institutions ────────────────────────────────────────────────────── */
+.cta-card {
+    background: linear-gradient(135deg, #F8FAFC, #EFF6FF);
+    border: 1px dashed #CBD5E1;
+    border-radius: 16px;
+    padding: 2rem 2.5rem;
+    text-align: center;
+    margin-top: 1.5rem;
+}
+.cta-card h3 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.2rem; font-weight: 700;
+    color: #1E293B; margin: 0 0 0.5rem;
+}
+.cta-card p { color: #64748B; font-size: 0.875rem; margin: 0 0 1.25rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Hero ──────────────────────────────────────────────────────────────────────
+
+# ════════════════════════════════════════════════════════════════════════════
+# HERO
+# ════════════════════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="hero">
+    <div class="hero-badge">Plateforme académique</div>
     <h1>🎓 UniSchedule</h1>
-    <p>Consultez votre emploi du temps en quelques secondes — sans inscription</p>
+    <p class="subtitle">
+        Consultez votre emploi du temps, déposez vos TPs, suivez vos notes
+        — le tout sans installation, accessible depuis n'importe quel appareil.
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Layout : Universités (gauche) + Pub (droite) ──────────────────────────────
-col_unis, col_pub = st.columns([3, 1], gap="large")
 
-with col_unis:
-    st.markdown("#### 🏛️ Choisissez votre université")
-    search = st.text_input("", placeholder="🔍  Rechercher une université...", label_visibility="collapsed")
+# ════════════════════════════════════════════════════════════════════════════
+# FONCTIONNALITÉS
+# ════════════════════════════════════════════════════════════════════════════
+f1, f2, f3, f4 = st.columns(4, gap="medium")
 
-    try:
-        universities = UniversityQueries.get_all()
-    except Exception as e:
-        st.error(f"❌ Connexion impossible : {e}")
-        st.info("💡 Configurez `.streamlit/secrets.toml`")
-        st.stop()
+features = [
+    ("📅", "Emploi du temps", "Horaires en temps réel, filtre semaines paires / impaires, grille hebdomadaire claire."),
+    ("📝", "Travaux pratiques", "Déposez vos TPs en PDF avant la deadline. Le dépôt se ferme automatiquement."),
+    ("📊", "Notes & résultats", "Vos résultats publiés directement par vos professeurs, classés par matière."),
+    ("📄", "Cours en PDF", "Téléchargez les documents de cours déposés par vos enseignants, à tout moment."),
+]
 
-    if search:
-        universities = [u for u in universities
-                        if search.lower() in u["name"].lower()
-                        or (u.get("address") and search.lower() in u["address"].lower())]
+for col, (icon, title, desc) in zip([f1, f2, f3, f4], features):
+    with col:
+        st.markdown(f"""
+        <div class="feature-card">
+            <div class="icon">{icon}</div>
+            <h4>{title}</h4>
+            <p>{desc}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if not universities:
-        st.info("Aucune université trouvée.")
-    else:
-        # Grille 3 colonnes
-        cols = st.columns(3, gap="medium")
-        for i, uni in enumerate(universities):
-            with cols[i % 3]:
-                photo = uni.get("photo_url") or "https://images.unsplash.com/photo-1562774053-701939374585?w=400"
-                address = uni.get("address") or "—"
-                st.markdown(f"""
-                <div class="uni-card">
-                    <img src="{photo}" alt="{uni['name']}">
-                    <div class="uni-card-body">
-                        <h4>{uni['name']}</h4>
-                        <p>📍 {address}</p>
-                    </div>
+
+# ════════════════════════════════════════════════════════════════════════════
+# BARRE DE STATS
+# ════════════════════════════════════════════════════════════════════════════
+try:
+    stats = UniversityQueries.get_platform_stats() or {}
+except Exception:
+    stats = {}
+
+uni_count   = stats.get("uni_count", 0)
+prof_count  = stats.get("prof_count", 0)
+sch_count   = stats.get("schedule_count", 0)
+stu_count   = stats.get("student_count", 0)
+
+st.markdown(f"""
+<div class="stats-bar">
+    <div class="stat-item">
+        <div class="num">{uni_count}</div>
+        <div class="lbl">Université(s)</div>
+    </div>
+    <div class="stat-item">
+        <div class="num">{prof_count}</div>
+        <div class="lbl">Professeurs</div>
+    </div>
+    <div class="stat-item">
+        <div class="num">{sch_count}</div>
+        <div class="lbl">Créneaux planifiés</div>
+    </div>
+    <div class="stat-item">
+        <div class="num">{stu_count}</div>
+        <div class="lbl">Étudiants inscrits</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# LISTE DES UNIVERSITÉS
+# ════════════════════════════════════════════════════════════════════════════
+st.markdown("""
+<p class="section-title">🏛️ Choisissez votre université</p>
+<p class="section-sub">Sélectionnez votre établissement pour accéder à votre emploi du temps</p>
+""", unsafe_allow_html=True)
+
+search = st.text_input(
+    "", placeholder="🔍  Rechercher une université...",
+    label_visibility="collapsed"
+)
+
+try:
+    universities = UniversityQueries.get_all()
+except Exception as e:
+    st.error(f"❌ Connexion impossible : {e}")
+    st.info("💡 Configurez `.streamlit/secrets.toml`")
+    st.stop()
+
+if search:
+    universities = [
+        u for u in universities
+        if search.lower() in u["name"].lower()
+        or (u.get("address") and search.lower() in u["address"].lower())
+    ]
+
+if not universities:
+    st.markdown("""
+    <div style="text-align:center;padding:3rem;color:#94A3B8">
+        <div style="font-size:3rem">🏛️</div>
+        <p>Aucune université trouvée.</p>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    cols = st.columns(3, gap="medium")
+    for i, uni in enumerate(universities):
+        with cols[i % 3]:
+            _raw_photo = uni.get("photo_url") or ""
+            if _raw_photo and not _raw_photo.startswith("http"):
+                from utils.components import get_logo_display_url
+                _raw_photo = get_logo_display_url(_raw_photo) or ""
+            photo = _raw_photo or "https://images.unsplash.com/photo-1562774053-701939374585?w=400"
+            address = uni.get("address") or "—"
+            color   = uni.get("primary_color") or "#2563EB"
+
+            if _raw_photo:
+                _cover_html = f'<img class="uni-card-cover" src="{_raw_photo}" alt="{uni["name"]}">'
+            else:
+                _cover_html = (f'<div class="uni-card-cover-fallback" '
+                               f'style="background:linear-gradient(135deg,{color}18,{color}30)">🏛️</div>')
+            st.markdown(f"""
+            <div class="uni-card" style="border-top:4px solid {color}">
+                {_cover_html}
+                <div class="uni-card-body">
+                    <h4 style="color:{color}">{uni['name']}</h4>
+                    <p>📍 {address}</p>
                 </div>
-                """, unsafe_allow_html=True)
-                if st.button("Voir l'horaire →", key=f"uni_{uni['id']}", use_container_width=True, type="primary"):
-                    st.session_state["sel_uni_id"]   = uni["id"]
-                    st.session_state["sel_uni_name"] = uni["name"]
-                    st.switch_page("pages/2_Horaire.py")
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(
+                "Voir l'horaire →",
+                key=f"uni_{uni['id']}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.session_state["sel_uni_id"]   = uni["id"]
+                st.session_state["sel_uni_name"] = uni["name"]
+                st.switch_page("pages/2_Horaire.py")
 
     st.caption(f"{len(universities)} université(s) disponible(s)")
 
-with col_pub:
-    st.markdown("#### 📢 Partenaires")
-    st.markdown("""
-    <div class="pub-card">
-        <div style="font-size:2.5rem">📣</div>
-        <div style="color:#94A3B8;font-size:0.8rem;font-weight:500">ESPACE PUBLICITAIRE</div>
-        <div style="color:#CBD5E1;font-size:0.72rem">
-            Contactez-nous pour afficher<br>votre publicité ici
-        </div>
-        <a href="mailto:contact@unischedule.dz"
-           style="background:#2563EB;color:white;padding:0.4rem 1rem;border-radius:8px;
-                  text-decoration:none;font-size:0.78rem;font-weight:600">
-            Nous contacter
-        </a>
-    </div>
-    <br>
-    <div class="pub-card" style="margin-top:0">
-        <div style="font-size:2rem">🤝</div>
-        <div style="color:#94A3B8;font-size:0.8rem;font-weight:500">PARTENARIAT</div>
-        <div style="color:#CBD5E1;font-size:0.72rem">
-            Votre bannière<br>partenaire ici
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════════════════════════════════
+# CTA INSTITUTIONS
+# ════════════════════════════════════════════════════════════════════════════
+st.markdown("""
+<div class="cta-card">
+    <h3>📣 Votre université n'est pas encore sur UniSchedule ?</h3>
+    <p>
+        Rejoignez la plateforme et offrez à vos étudiants un accès simple
+        à leurs emplois du temps, TPs et notes.
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+_, cta_col, _ = st.columns([1, 2, 1])
+with cta_col:
+    st.link_button(
+        "✉️ Nous contacter pour rejoindre la plateforme",
+        "mailto:contact@unischedule.dz",
+        use_container_width=True,
+    )

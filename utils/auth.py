@@ -1,13 +1,14 @@
 # utils/auth.py
 import bcrypt
 import streamlit as st
-from db.queries import UserQueries
+from db.queries import UserQueries, StudentQueries, StudentRegistryQueries
 
 ROLE_LABELS = {
     "super_admin":       "Super Administrateur",
     "admin_universite":  "Admin Université",
     "admin_faculte":     "Admin Faculté",
     "admin_departement": "Admin Département",
+    "professeur":        "Professeur",
 }
 
 
@@ -45,6 +46,7 @@ def login(email: str, password: str):
         "university_id": user.get("university_id"),
         "faculty_id":    user.get("faculty_id"),
         "department_id": user.get("department_id"),
+        "professor_id":  user.get("professor_id"),
     }
     st.session_state["authenticated"] = True
 
@@ -87,6 +89,140 @@ def require_auth():
         if st.button("→ Se connecter", type="primary"):
             st.switch_page("pages/7_Admin_Login.py")
         st.stop()
+
+
+def require_prof_auth():
+    """Redirige vers login si pas connecté en tant que professeur."""
+    user = get_current_user()
+    if not user or user.get("role") != "professeur":
+        st.warning("🔒 Accès réservé aux professeurs.")
+        if st.button("→ Se connecter", type="primary"):
+            st.switch_page("pages/12_Prof_Auth.py")
+        st.stop()
+
+
+# ════════════════════════════════════════════════════════════
+# AUTH ÉTUDIANTS  (session séparée : st.session_state["student"])
+# ════════════════════════════════════════════════════════════
+
+def get_current_student():
+    if st.session_state.get("student_authenticated") and "student" in st.session_state:
+        return st.session_state["student"]
+    return None
+
+
+def logout_student():
+    for k in ["student", "student_authenticated"]:
+        st.session_state.pop(k, None)
+
+
+def require_student_auth():
+    if not get_current_student():
+        st.warning("🔒 Veuillez vous connecter à votre espace étudiant.")
+        if st.button("→ Se connecter / S'inscrire", type="primary"):
+            st.switch_page("pages/10_Student_Auth.py")
+        st.stop()
+
+
+def login_student(login_input: str, university_id: int, password: str):
+    if not login_input or not password:
+        return False, "Identifiant et mot de passe requis."
+    try:
+        student = StudentQueries.get_by_login(login_input, university_id)
+    except Exception as e:
+        return False, f"Erreur de connexion : {e}"
+
+    if not student:
+        return False, "Identifiant ou mot de passe incorrect."
+    if not verify_password(password, student["password_hash"]):
+        return False, "Identifiant ou mot de passe incorrect."
+    if not student.get("is_active"):
+        return False, "Ce compte étudiant est désactivé."
+
+    prenom = student.get("prenom") or ""
+    nom    = student.get("nom") or student.get("full_name") or ""
+    display_name = f"{prenom} {nom}".strip() or student.get("full_name", "")
+
+    st.session_state["student"] = {
+        "id":             student["id"],
+        "student_number": student["student_number"],
+        "full_name":      student.get("full_name") or display_name,
+        "display_name":   display_name,
+        "nom":            student.get("nom"),
+        "postnom":        student.get("postnom"),
+        "prenom":         student.get("prenom"),
+        "username":       student.get("username"),
+        "email":          student.get("email"),
+        "class_id":       student.get("class_id"),
+        "university_id":  student["university_id"],
+    }
+    st.session_state["student_authenticated"] = True
+
+    try:
+        StudentQueries.update_last_login(student["id"])
+    except Exception:
+        pass
+
+    return True, f"Bienvenue, {display_name or student['student_number']} !"
+
+
+def register_student(student_number: str, university_id: int,
+                     username: str, password: str, confirm: str):
+    if not student_number or not username or not password:
+        return False, "Tous les champs obligatoires doivent être remplis."
+    if len(username.strip()) < 3:
+        return False, "Le nom d'utilisateur doit contenir au moins 3 caractères."
+    if len(password) < 8:
+        return False, "Le mot de passe doit contenir au moins 8 caractères."
+    if password != confirm:
+        return False, "Les mots de passe ne correspondent pas."
+
+    try:
+        registry = StudentRegistryQueries.verify(student_number, university_id)
+    except Exception as e:
+        return False, f"Erreur de vérification : {e}"
+
+    if not registry:
+        return False, "Numéro étudiant non reconnu pour cette université. Contactez l'administration."
+
+    try:
+        existing = StudentQueries.exists(student_number, university_id)
+    except Exception as e:
+        return False, f"Erreur : {e}"
+    if existing:
+        return False, "Un compte existe déjà pour ce numéro étudiant."
+
+    try:
+        taken = StudentQueries.exists_username(username.strip())
+    except Exception as e:
+        return False, f"Erreur : {e}"
+    if taken:
+        return False, "Ce nom d'utilisateur est déjà pris. Choisissez-en un autre."
+
+    nom     = registry.get("nom") or ""
+    postnom = registry.get("postnom") or ""
+    prenom  = registry.get("prenom") or ""
+    full_name = " ".join(filter(None, [prenom, nom, postnom])) or registry.get("full_name", "")
+
+    try:
+        pwd_hash = hash_password(password)
+        StudentQueries.create(
+            student_number=student_number,
+            full_name=full_name,
+            email=None,
+            password_hash=pwd_hash,
+            class_id=registry.get("class_id"),
+            university_id=university_id,
+            registry_id=registry["id"],
+            nom=nom or None,
+            postnom=postnom or None,
+            prenom=prenom or None,
+            username=username.strip(),
+        )
+        StudentRegistryQueries.mark_registered(registry["id"])
+        return True, f"Compte créé ! Connectez-vous avec le nom d'utilisateur : {username.strip()}"
+    except Exception as e:
+        return False, f"Erreur lors de la création : {e}"
 
 
 def create_admin(name, email, password, role,
