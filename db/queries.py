@@ -969,6 +969,11 @@ class StudentRegistryQueries:
 
     @staticmethod
     def delete(registry_id):
+        # Délier le compte étudiant avant suppression (FK sans CASCADE)
+        execute_query(
+            "UPDATE students SET registry_id=NULL WHERE registry_id=%s",
+            (registry_id,), fetch="none"
+        )
         execute_query("DELETE FROM student_registry WHERE id=%s",
                       (registry_id,), fetch="none")
 
