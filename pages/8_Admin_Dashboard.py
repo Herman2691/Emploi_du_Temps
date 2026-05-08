@@ -824,23 +824,33 @@ def render_admin_departement():
                 name = st.text_input("Nom (ex: L1 Informatique) *")
                 _default_ay = _current_ay["label"] if _current_ay else "2024-2025"
                 year = st.text_input("Année académique *", value=_default_ay)
+                is_rec = st.checkbox(
+                    "Promotion de recrutement (1ère année — liste fraîche chaque année)",
+                    value=False
+                )
                 if st.form_submit_button("Créer", type="primary"):
                     if name.strip() and year.strip():
-                        PromotionQueries.create(name.strip(), year.strip(), dept_id)
+                        PromotionQueries.create(name.strip(), year.strip(),
+                                                dept_id, is_rec)
                         st.success("✅ Promotion créée !"); st.rerun()
                     else:
                         st.error("Tous les champs sont obligatoires.")
 
         for promo in promotions:
-            with st.expander(f"🎓 {promo['name']} ({promo['academic_year']})"):
+            _rec_tag = " 🆕" if promo.get("is_recrutement") else ""
+            with st.expander(f"🎓 {promo['name']} ({promo['academic_year']}){_rec_tag}"):
                 with st.form(f"edit_promo_{promo['id']}"):
                     nn = st.text_input("Nom",   value=promo["name"])
                     ny = st.text_input("Année", value=promo["academic_year"])
+                    nr = st.checkbox(
+                        "Promotion de recrutement",
+                        value=bool(promo.get("is_recrutement"))
+                    )
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.form_submit_button("💾 Sauvegarder"):
                             try:
-                                PromotionQueries.update(promo["id"],nn,ny)
+                                PromotionQueries.update(promo["id"], nn, ny, nr)
                                 st.success("✅ Promotion mise à jour !"); st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur : {e}")
@@ -2115,6 +2125,86 @@ def render_admin_departement():
         c3r.metric("En attente",      len(registry) - registered_count)
         _annees_reg = StudentRegistryQueries.get_annees_academiques(uni_id_for_reg)
         c4r.metric("Années académiques", len(_annees_reg))
+        st.divider()
+
+        # ── Générer la liste pour une nouvelle année ──────────────────────────
+        with st.expander("📋 Générer la liste d'inscrits pour une nouvelle année"):
+            try:
+                _all_promos_gen = _PQ.get_by_department(dept_id) or []
+            except Exception:
+                _all_promos_gen = []
+
+            if not _all_promos_gen:
+                st.info("Créez d'abord des promotions dans l'onglet Promotions.")
+            else:
+                _g1, _g2 = st.columns(2)
+                with _g1:
+                    _gen_target = st.selectbox(
+                        "Promotion cible *",
+                        options=_all_promos_gen,
+                        format_func=lambda p: (
+                            f"{'🆕 ' if p.get('is_recrutement') else ''}{p['name']}"
+                        ),
+                        key="gen_target_promo"
+                    )
+                with _g2:
+                    _gen_new_year = st.text_input(
+                        "Nouvelle année académique *",
+                        value=_current_ay["label"] if _current_ay else "",
+                        placeholder="ex: 2025-2026",
+                        key="gen_new_year"
+                    )
+
+                if _gen_target and _gen_target.get("is_recrutement"):
+                    st.info(
+                        "🆕 Cette promotion est de **recrutement** — "
+                        "les étudiants arrivent de l'extérieur. "
+                        "Utilisez l'import Excel ou la saisie manuelle ci-dessous."
+                    )
+                elif _gen_target:
+                    st.markdown("**Source des admis (promotion précédente) :**")
+                    _g3, _g4 = st.columns(2)
+                    with _g3:
+                        _gen_source = st.selectbox(
+                            "Promotion source (admis) *",
+                            options=_all_promos_gen,
+                            format_func=lambda p: p["name"],
+                            key="gen_source_promo"
+                        )
+                    with _g4:
+                        _gen_source_year = st.text_input(
+                            "Année source *",
+                            placeholder="ex: 2024-2025",
+                            key="gen_source_year"
+                        )
+                    st.caption(
+                        "Les **redoublants** de la même promotion de l'année précédente "
+                        "seront également ajoutés automatiquement."
+                    )
+                    if st.button("🚀 Générer la liste", type="primary",
+                                 key="btn_gen_list"):
+                        if not _gen_new_year.strip() or not _gen_source_year.strip():
+                            st.error("Renseignez les deux années académiques.")
+                        elif not _gen_source:
+                            st.error("Sélectionnez la promotion source.")
+                        else:
+                            try:
+                                _res = StudentRegistryQueries.generate_from_previous_year(
+                                    source_promotion_id=_gen_source["id"],
+                                    source_year=_gen_source_year.strip(),
+                                    target_promotion_id=_gen_target["id"],
+                                    new_year=_gen_new_year.strip(),
+                                    university_id=uni_id_for_reg,
+                                )
+                                st.success(
+                                    f"✅ Liste générée — "
+                                    f"**{_res['admis']}** admis promus · "
+                                    f"**{_res['redoublants']}** redoublants reconduits"
+                                )
+                                st.rerun()
+                            except Exception as _ge:
+                                st.error(f"Erreur : {_ge}")
+
         st.divider()
 
         # ── Filtres d'affichage et d'export ──────────────────────────────────

@@ -174,17 +174,18 @@ class PromotionQueries:
         )
 
     @staticmethod
-    def create(name, academic_year, department_id):
+    def create(name, academic_year, department_id, is_recrutement=False):
         return execute_query(
-            "INSERT INTO promotions (name,academic_year,department_id) VALUES (%s,%s,%s) RETURNING id",
-            (name, academic_year, department_id), fetch="one"
+            "INSERT INTO promotions (name,academic_year,department_id,is_recrutement) "
+            "VALUES (%s,%s,%s,%s) RETURNING id",
+            (name, academic_year, department_id, is_recrutement), fetch="one"
         )
 
     @staticmethod
-    def update(promotion_id, name, academic_year):
+    def update(promotion_id, name, academic_year, is_recrutement=False):
         execute_query(
-            "UPDATE promotions SET name=%s,academic_year=%s WHERE id=%s",
-            (name, academic_year, promotion_id), fetch="none"
+            "UPDATE promotions SET name=%s,academic_year=%s,is_recrutement=%s WHERE id=%s",
+            (name, academic_year, is_recrutement, promotion_id), fetch="none"
         )
 
     @staticmethod
@@ -993,6 +994,76 @@ class StudentRegistryQueries:
             "UPDATE student_registry SET statut=%s WHERE id=%s",
             (statut, registry_id), fetch="none"
         )
+
+    @staticmethod
+    def generate_from_previous_year(
+        source_promotion_id, source_year,
+        target_promotion_id, new_year,
+        university_id
+    ) -> dict:
+        """
+        Génère la liste d'inscrits pour new_year/target_promotion à partir de :
+        - Les ADMIS de source_promotion/source_year (promus vers la promo suivante)
+        - Les REDOUBLANTS de target_promotion/année précédente de new_year
+        Retourne {"admis": n, "redoublants": n}.
+        """
+        # Calcul de l'année précédente (ex: "2025-2026" → "2024-2025")
+        try:
+            start = int(new_year.split("-")[0])
+            prev_year = f"{start - 1}-{start}"
+        except (ValueError, IndexError):
+            prev_year = None
+
+        # ── Admis (promus depuis la promotion source) ──────────────────────────
+        r_admis = execute_query("""
+            INSERT INTO student_registry
+                (student_number, full_name, university_id, class_id,
+                 nom, postnom, prenom, promotion_txt, option_txt,
+                 department_id, filiere_id, option_id, promotion_id,
+                 annee_academique, ecole_provenance, date_naissance, sexe, statut)
+            SELECT
+                r.student_number, r.full_name, r.university_id, NULL,
+                r.nom, r.postnom, r.prenom, pr.name, r.option_txt,
+                r.department_id, r.filiere_id, r.option_id, %s,
+                %s, r.ecole_provenance, r.date_naissance, r.sexe, 'inscrit'
+            FROM student_registry r
+            JOIN promotions pr ON pr.id = %s
+            WHERE r.promotion_id = %s
+              AND r.annee_academique = %s
+              AND r.statut = 'admis'
+              AND r.university_id = %s
+            ON CONFLICT (student_number, university_id, annee_academique) DO NOTHING
+            RETURNING id
+        """, (target_promotion_id, new_year, target_promotion_id,
+              source_promotion_id, source_year, university_id))
+
+        # ── Redoublants (même promo, année précédente) ─────────────────────────
+        r_redoub = []
+        if prev_year:
+            r_redoub = execute_query("""
+                INSERT INTO student_registry
+                    (student_number, full_name, university_id, class_id,
+                     nom, postnom, prenom, promotion_txt, option_txt,
+                     department_id, filiere_id, option_id, promotion_id,
+                     annee_academique, ecole_provenance, date_naissance, sexe, statut)
+                SELECT
+                    r.student_number, r.full_name, r.university_id, NULL,
+                    r.nom, r.postnom, r.prenom, r.promotion_txt, r.option_txt,
+                    r.department_id, r.filiere_id, r.option_id, r.promotion_id,
+                    %s, r.ecole_provenance, r.date_naissance, r.sexe, 'inscrit'
+                FROM student_registry r
+                WHERE r.promotion_id = %s
+                  AND r.annee_academique = %s
+                  AND r.statut = 'redoublant'
+                  AND r.university_id = %s
+                ON CONFLICT (student_number, university_id, annee_academique) DO NOTHING
+                RETURNING id
+            """, (new_year, target_promotion_id, prev_year, university_id))
+
+        return {
+            "admis":      len(r_admis or []),
+            "redoublants": len(r_redoub or []),
+        }
 
     @staticmethod
     def update_class(registry_id, class_id):
