@@ -2502,6 +2502,22 @@ def render_admin_departement():
         # ── Liste du registre ─────────────────────────────────────────────────
         from db.queries import StudentQueries as _SQReg
         from utils.auth import hash_password as _hp_reg
+
+        _STATUT_OPTS = {
+            "inscrit":    "📋 Inscrit",
+            "admis":      "✅ Admis(e)",
+            "redoublant": "🔄 Redoublant(e)",
+            "transfere":  "↗️ Transféré(e)",
+            "abandonne":  "❌ Abandonné(e)",
+        }
+        _STATUT_COLORS = {
+            "inscrit":    "#3B82F6",
+            "admis":      "#10B981",
+            "redoublant": "#F59E0B",
+            "transfere":  "#8B5CF6",
+            "abandonne":  "#EF4444",
+        }
+
         st.divider()
         st.markdown(f"#### Liste d'inscription ({len(_reg_filtered)} étudiant(s))")
         if not _reg_filtered:
@@ -2509,7 +2525,10 @@ def render_admin_departement():
         else:
             for reg in _reg_filtered:
                 _has_account = bool(reg.get("is_registered"))
-                _reg_status  = "✅" if _has_account else "⚪"
+                _statut_val  = reg.get("statut") or "inscrit"
+                _statut_lbl  = _STATUT_OPTS.get(_statut_val, _statut_val)
+                _statut_clr  = _STATUT_COLORS.get(_statut_val, "#64748B")
+                _acc_icon    = "✅" if _has_account else "⚪"
                 nom_display  = " ".join(filter(None, [
                     reg.get("prenom",""), reg.get("nom",""), reg.get("postnom","")
                 ])) or reg.get("full_name","—")
@@ -2519,8 +2538,8 @@ def render_admin_departement():
                 _pr_lbl   = reg.get("promotion_name") or "—"
                 _yr_lbl   = reg.get("annee_academique") or "—"
                 with st.expander(
-                    f"{_reg_status} **{reg['student_number']}** — {nom_display}  "
-                    f"·  {_fi_lbl} / {_opt_lbl}  ·  {_yr_lbl}"
+                    f"{_acc_icon} **{reg['student_number']}** — {nom_display}  "
+                    f"·  {_statut_lbl}  ·  {_yr_lbl}"
                 ):
                     ca, cb, cc, cd = st.columns(4)
                     ca.markdown(f"**Département**  \n{_dept_lbl}")
@@ -2534,6 +2553,24 @@ def render_admin_departement():
                         if _ecole: _parts.append(f"École : {_ecole}")
                         if _sexe:  _parts.append(f"Sexe : {_sexe}")
                         st.caption("  ·  ".join(_parts))
+
+                    # ── Statut académique ─────────────────────────────────────
+                    _st_col, _st_btn = st.columns([3, 1])
+                    _new_statut = _st_col.selectbox(
+                        "Statut académique",
+                        options=list(_STATUT_OPTS.keys()),
+                        index=list(_STATUT_OPTS.keys()).index(_statut_val)
+                              if _statut_val in _STATUT_OPTS else 0,
+                        format_func=lambda s: _STATUT_OPTS[s],
+                        key=f"statut_sel_{reg['id']}",
+                    )
+                    with _st_btn:
+                        st.write("")
+                        st.write("")
+                        if st.button("💾 Sauver", key=f"save_statut_{reg['id']}",
+                                     use_container_width=True):
+                            StudentRegistryQueries.update_statut(reg["id"], _new_statut)
+                            st.success("Statut mis à jour."); st.rerun()
 
                     st.divider()
 
@@ -3246,166 +3283,15 @@ def render_admin_departement():
                                     st.error(f"Erreur : {e}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 12 : INSCRIPTIONS ACADÉMIQUES
+    # ONGLET 12 : INSCRIPTIONS (fusionné dans Registre)
     # ══════════════════════════════════════════════════════════════════════════
     with tabs[12]:
-        st.markdown("#### Inscriptions académiques")
-        st.caption("Suivez la progression des étudiants : passage, redoublement, transfert.")
-
-        _STATUS_LABELS_INS = {
-            "inscrit": "📋 Inscrit",
-            "admis": "✅ Admis(e)",
-            "redoublant": "🔄 Redoublant(e)",
-            "transfere": "↗️ Transféré(e)",
-            "abandonne": "❌ Abandonné(e)",
-        }
-        _STATUS_COLORS = {
-            "inscrit": "#3B82F6",
-            "admis": "#10B981",
-            "redoublant": "#F59E0B",
-            "transfere": "#8B5CF6",
-            "abandonne": "#EF4444",
-        }
-
-        try:
-            _promos_ins = PromotionQueries.get_by_department(dept_id)
-            _options_ins = OptionEtudeQueries.get_by_department(dept_id)
-        except Exception as e:
-            st.error(f"Erreur : {e}"); _promos_ins = []; _options_ins = []
-
-        if not _promos_ins:
-            st.info("Créez d'abord des promotions.")
-        else:
-            _col_p, _col_c = st.columns(2)
-            with _col_p:
-                _ins_promo = st.selectbox(
-                    "Promotion", options=_promos_ins,
-                    format_func=lambda p: f"{p['name']} ({p['academic_year']})",
-                    key="ins_promo"
-                )
-            _ins_classes = ClassQueries.get_by_promotion(_ins_promo["id"]) if _ins_promo else []
-            with _col_c:
-                _ins_class = st.selectbox(
-                    "Salle", options=_ins_classes,
-                    format_func=lambda c: c["name"],
-                    key="ins_class"
-                ) if _ins_classes else None
-
-            _ins_year = st.text_input(
-                "Année académique",
-                value=_current_ay["label"] if _current_ay else "2024-2025",
-                key="ins_year", placeholder="ex: 2024-2025"
-            )
-
-            if _ins_class and _ins_year.strip():
-                try:
-                    _ins_students = AcademicEnrollmentQueries.get_by_class_year(
-                        _ins_class["id"], _ins_year.strip()
-                    )
-                    _all_students_cls = __import__(
-                        "db.queries", fromlist=["StudentQueries"]
-                    ).StudentQueries.get_by_class(_ins_class["id"])
-                except Exception as e:
-                    st.error(str(e))
-                    _ins_students = []; _all_students_cls = []
-
-                _enrolled_ids = {e["student_id"] for e in _ins_students}
-                _not_enrolled = [s for s in _all_students_cls
-                                 if s["id"] not in _enrolled_ids]
-
-                c1i, c2i = st.columns(2)
-                c1i.metric("Inscrits cette année", len(_ins_students))
-                c2i.metric("Non inscrits", len(_not_enrolled))
-                st.divider()
-
-                # ── Inscrire des étudiants non encore inscrits ────────────────
-                if _not_enrolled:
-                    with st.expander(f"➕ Inscrire des étudiants ({len(_not_enrolled)} en attente)"):
-                        _sel_students = st.multiselect(
-                            "Sélectionner les étudiants à inscrire",
-                            options=_not_enrolled,
-                            format_func=lambda s: f"{s['full_name']} ({s['student_number']})",
-                            key="ins_sel_students"
-                        )
-                        _ins_opt = st.selectbox(
-                            "Option (optionnel)",
-                            options=[None] + list(_options_ins),
-                            format_func=lambda o: "— Aucune —" if o is None
-                                                  else f"{o['name']} — {o.get('filiere_name','')}",
-                            key="ins_option_sel"
-                        )
-                        if st.button("✅ Inscrire", type="primary", key="btn_enroll"):
-                            if not _sel_students:
-                                st.error("Sélectionnez au moins un étudiant.")
-                            else:
-                                _ok = 0
-                                for _stu in _sel_students:
-                                    try:
-                                        AcademicEnrollmentQueries.enroll(
-                                            student_id=_stu["id"],
-                                            class_id=_ins_class["id"],
-                                            promotion_id=_ins_promo["id"],
-                                            academic_year=_ins_year.strip(),
-                                            option_id=_ins_opt["id"] if _ins_opt else None,
-                                            changed_by=user["id"],
-                                        )
-                                        _ok += 1
-                                    except Exception:
-                                        pass
-                                st.success(f"✅ {_ok} étudiant(s) inscrit(s) !")
-                                st.rerun()
-
-                # ── Liste et gestion des inscrits ─────────────────────────────
-                if _ins_students:
-                    st.markdown("#### Liste des inscrits")
-                    for _enr in _ins_students:
-                        _enr_color = _STATUS_COLORS.get(_enr["status"], "#64748B")
-                        _enr_label = _STATUS_LABELS_INS.get(_enr["status"], _enr["status"])
-                        with st.expander(
-                            f"{_enr_label} · {_enr['student_name']} "
-                            f"({_enr['student_number']})"
-                        ):
-                            st.caption(
-                                f"Option : {_enr.get('option_name') or '—'}  ·  "
-                                f"Inscrit le : {_enr.get('enrolled_at','—')}"
-                            )
-                            with st.form(f"upd_enr_{_enr['id']}"):
-                                _new_status = st.selectbox(
-                                    "Statut",
-                                    list(_STATUS_LABELS_INS.keys()),
-                                    format_func=lambda s: _STATUS_LABELS_INS[s],
-                                    index=list(_STATUS_LABELS_INS.keys()).index(
-                                        _enr["status"]
-                                        if _enr["status"] in _STATUS_LABELS_INS
-                                        else "inscrit"
-                                    )
-                                )
-                                _new_note = st.text_area(
-                                    "Note (raison du changement)",
-                                    value=_enr.get("notes") or ""
-                                )
-                                _new_opt = st.selectbox(
-                                    "Option",
-                                    options=[None] + list(_options_ins),
-                                    format_func=lambda o: "— Aucune —" if o is None
-                                                          else f"{o['name']}",
-                                    index=next(
-                                        (i+1 for i, o in enumerate(_options_ins)
-                                         if o["id"] == _enr.get("option_id")), 0
-                                    )
-                                )
-                                if st.form_submit_button("💾 Mettre à jour"):
-                                    try:
-                                        AcademicEnrollmentQueries.update_status(
-                                            _enr["id"], _new_status,
-                                            _new_note, user["id"]
-                                        )
-                                        st.success("✅ Statut mis à jour !"); st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Erreur : {e}")
-                else:
-                    st.info("Aucun étudiant inscrit pour cette année. "
-                            "Utilisez le bouton ci-dessus.")
+        st.info(
+            "La gestion des inscriptions et des statuts académiques "
+            "(Inscrit / Admis / Redoublant / Transféré / Abandonné) "
+            "se fait désormais directement depuis l'onglet **Registre Étudiants**. "
+            "Ouvrez la fiche d'un étudiant pour modifier son statut."
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 13 : DEMANDES DE MODIFICATION DE COTES

@@ -988,6 +988,13 @@ class StudentRegistryQueries:
         """, (registry_id, registry_id), fetch="none")
 
     @staticmethod
+    def update_statut(registry_id, statut):
+        execute_query(
+            "UPDATE student_registry SET statut=%s WHERE id=%s",
+            (statut, registry_id), fetch="none"
+        )
+
+    @staticmethod
     def update_class(registry_id, class_id):
         execute_query(
             "UPDATE student_registry SET class_id=%s WHERE id=%s",
