@@ -843,6 +843,27 @@ class StudentRegistryQueries:
         """, (department_id,))
 
     @staticmethod
+    def get_by_faculty(faculty_id):
+        return execute_query("""
+            SELECT r.*,
+                   d.name  AS department_name,
+                   fi.name AS filiere_name,
+                   o.name  AS option_name,
+                   pr.name AS promotion_name,
+                   (s.id IS NOT NULL)  AS is_registered,
+                   s.username          AS student_username
+            FROM student_registry r
+            LEFT JOIN departments   d  ON r.department_id = d.id
+            LEFT JOIN filieres      fi ON r.filiere_id    = fi.id
+            LEFT JOIN options_etude o  ON r.option_id     = o.id
+            LEFT JOIN promotions    pr ON r.promotion_id  = pr.id
+            LEFT JOIN students      s  ON s.registry_id   = r.id
+            WHERE d.faculty_id = %s
+            ORDER BY r.annee_academique DESC NULLS LAST,
+                     d.name NULLS LAST, fi.name NULLS LAST, r.full_name
+        """, (faculty_id,))
+
+    @staticmethod
     def get_by_filiere(filiere_id, annee_academique=None):
         sql = """
             SELECT r.*,

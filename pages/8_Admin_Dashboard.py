@@ -411,12 +411,13 @@ def render_admin_universite():
     c4.metric("Étudiants",    stats.get("students_count", 0))
     st.divider()
 
-    tab_fac, tab_dept, tab_profs, tab_admins, tab_announce = st.tabs([
+    tab_fac, tab_dept, tab_profs, tab_admins, tab_announce, tab_etu_uni = st.tabs([
         "📚 Facultés",
         "🏬 Départements",
         "👨‍🏫 Professeurs",
         "👥 Administrateurs",
         "📢 Communiqués",
+        "🎓 Étudiants",
     ])
 
     # ── ONGLET 1 : FACULTÉS ───────────────────────────────────────────────────
@@ -675,6 +676,86 @@ def render_admin_universite():
                         _AQ.delete(ann["id"])
                         st.success("✅ Communiqué supprimé."); st.rerun()
 
+    # ── ÉTUDIANTS (lecture seule) ─────────────────────────────────────────────
+    with tab_etu_uni:
+        from db.queries import StudentRegistryQueries as _SRQ_uni
+        try:
+            _reg_uni = _SRQ_uni.get_by_university(uni_id) or []
+        except Exception as e:
+            st.error(f"Erreur : {e}"); _reg_uni = []
+
+        _STATUT_COLORS_UNI = {
+            "inscrit": "#3B82F6", "admis": "#10B981",
+            "redoublant": "#F59E0B", "transfere": "#8B5CF6", "abandonne": "#EF4444",
+        }
+        _STATUT_LABELS_UNI = {
+            "inscrit": "📋 Inscrit", "admis": "✅ Admis",
+            "redoublant": "🔄 Redoublant", "transfere": "↗️ Transféré",
+            "abandonne": "❌ Abandonné",
+        }
+
+        # Métriques
+        _m1, _m2, _m3, _m4 = st.columns(4)
+        _m1.metric("Total inscrits", len(_reg_uni))
+        _m2.metric("Comptes créés", sum(1 for r in _reg_uni if r.get("is_registered")))
+        _m3.metric("Admis", sum(1 for r in _reg_uni if r.get("statut") == "admis"))
+        _m4.metric("Redoublants", sum(1 for r in _reg_uni if r.get("statut") == "redoublant"))
+        st.divider()
+
+        # Filtres
+        _annees_uni = sorted(set(r["annee_academique"] for r in _reg_uni
+                                  if r.get("annee_academique")), reverse=True)
+        _depts_uni  = sorted(set(r["department_name"] for r in _reg_uni
+                                  if r.get("department_name")))
+        _fu1, _fu2, _fu3, _fu4 = st.columns(4)
+        _fil_ay_u  = _fu1.selectbox("Année", ["Toutes"] + _annees_uni, key="fil_ay_uni")
+        _fil_dt_u  = _fu2.selectbox("Département", ["Tous"] + _depts_uni, key="fil_dt_uni")
+        _fil_st_u  = _fu3.selectbox("Statut", ["Tous"] + list(_STATUT_LABELS_UNI.keys()),
+                                     format_func=lambda s: "Tous" if s == "Tous"
+                                     else _STATUT_LABELS_UNI[s], key="fil_st_uni")
+        _search_u  = _fu4.text_input("🔍 Rechercher", placeholder="Nom ou matricule",
+                                      key="search_uni_etu")
+
+        _reg_u_filt = _reg_uni
+        if _fil_ay_u != "Toutes":
+            _reg_u_filt = [r for r in _reg_u_filt if r.get("annee_academique") == _fil_ay_u]
+        if _fil_dt_u != "Tous":
+            _reg_u_filt = [r for r in _reg_u_filt if r.get("department_name") == _fil_dt_u]
+        if _fil_st_u != "Tous":
+            _reg_u_filt = [r for r in _reg_u_filt if r.get("statut") == _fil_st_u]
+        if _search_u:
+            _s = _search_u.lower()
+            _reg_u_filt = [r for r in _reg_u_filt
+                           if _s in (r.get("full_name") or "").lower()
+                           or _s in (r.get("student_number") or "").lower()]
+
+        st.caption(f"**{len(_reg_u_filt)}** étudiant(s) correspondant(s)")
+        st.divider()
+
+        for _r in _reg_u_filt:
+            _stt = _r.get("statut") or "inscrit"
+            _stt_lbl = _STATUT_LABELS_UNI.get(_stt, _stt)
+            _stt_clr = _STATUT_COLORS_UNI.get(_stt, "#64748B")
+            _nom = " ".join(filter(None, [_r.get("prenom",""), _r.get("nom",""),
+                                          _r.get("postnom","")])) or _r.get("full_name","—")
+            with st.expander(
+                f"**{_r['student_number']}** — {_nom}  ·  "
+                f"{_r.get('department_name','—')}  ·  {_stt_lbl}"
+            ):
+                _ca, _cb, _cc, _cd = st.columns(4)
+                _ca.markdown(f"**Département**  \n{_r.get('department_name','—')}")
+                _cb.markdown(f"**Filière / Option**  \n"
+                             f"{_r.get('filiere_name','—')} / {_r.get('option_name','—')}")
+                _cc.markdown(f"**Promotion**  \n{_r.get('promotion_name','—')}")
+                _cd.markdown(f"**Année acad.**  \n{_r.get('annee_academique','—')}")
+                st.markdown(
+                    f"<span style='background:{_stt_clr}22;color:{_stt_clr};"
+                    f"padding:3px 10px;border-radius:12px;font-size:0.8rem'>"
+                    f"{_stt_lbl}</span>"
+                    f"&nbsp;&nbsp;Compte : {'✅' if _r.get('is_registered') else '⚪ Non créé'}",
+                    unsafe_allow_html=True
+                )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ADMIN FACULTÉ
@@ -693,7 +774,9 @@ def render_admin_faculte():
         st.error(f"Erreur : {e}"); return
 
     st.subheader(f"📚 {fac['name'] if fac else 'Votre faculté'}")
-    tab_dept, tab_admins = st.tabs(["🏢 Départements", "👥 Admins Département"])
+    tab_dept, tab_admins, tab_etu_fac = st.tabs([
+        "🏢 Départements", "👥 Admins Département", "🎓 Étudiants"
+    ])
 
     with tab_dept:
         try:
@@ -762,6 +845,84 @@ def render_admin_faculte():
                         st.rerun()
                     else:
                         st.error(f"❌ {msg}")
+
+    # ── ÉTUDIANTS (lecture seule) ─────────────────────────────────────────────
+    with tab_etu_fac:
+        from db.queries import StudentRegistryQueries as _SRQ_fac
+        try:
+            _reg_fac = _SRQ_fac.get_by_faculty(fac_id) or []
+        except Exception as e:
+            st.error(f"Erreur : {e}"); _reg_fac = []
+
+        _STATUT_COLORS_FAC = {
+            "inscrit": "#3B82F6", "admis": "#10B981",
+            "redoublant": "#F59E0B", "transfere": "#8B5CF6", "abandonne": "#EF4444",
+        }
+        _STATUT_LABELS_FAC = {
+            "inscrit": "📋 Inscrit", "admis": "✅ Admis",
+            "redoublant": "🔄 Redoublant", "transfere": "↗️ Transféré",
+            "abandonne": "❌ Abandonné",
+        }
+
+        _f1, _f2, _f3, _f4 = st.columns(4)
+        _f1.metric("Total inscrits", len(_reg_fac))
+        _f2.metric("Comptes créés", sum(1 for r in _reg_fac if r.get("is_registered")))
+        _f3.metric("Admis", sum(1 for r in _reg_fac if r.get("statut") == "admis"))
+        _f4.metric("Redoublants", sum(1 for r in _reg_fac if r.get("statut") == "redoublant"))
+        st.divider()
+
+        _annees_fac = sorted(set(r["annee_academique"] for r in _reg_fac
+                                  if r.get("annee_academique")), reverse=True)
+        _depts_fac  = sorted(set(r["department_name"] for r in _reg_fac
+                                  if r.get("department_name")))
+        _ff1, _ff2, _ff3, _ff4 = st.columns(4)
+        _fil_ay_f  = _ff1.selectbox("Année", ["Toutes"] + _annees_fac, key="fil_ay_fac")
+        _fil_dt_f  = _ff2.selectbox("Département", ["Tous"] + _depts_fac, key="fil_dt_fac")
+        _fil_st_f  = _ff3.selectbox("Statut", ["Tous"] + list(_STATUT_LABELS_FAC.keys()),
+                                     format_func=lambda s: "Tous" if s == "Tous"
+                                     else _STATUT_LABELS_FAC[s], key="fil_st_fac")
+        _search_f  = _ff4.text_input("🔍 Rechercher", placeholder="Nom ou matricule",
+                                      key="search_fac_etu")
+
+        _reg_f_filt = _reg_fac
+        if _fil_ay_f != "Toutes":
+            _reg_f_filt = [r for r in _reg_f_filt if r.get("annee_academique") == _fil_ay_f]
+        if _fil_dt_f != "Tous":
+            _reg_f_filt = [r for r in _reg_f_filt if r.get("department_name") == _fil_dt_f]
+        if _fil_st_f != "Tous":
+            _reg_f_filt = [r for r in _reg_f_filt if r.get("statut") == _fil_st_f]
+        if _search_f:
+            _s = _search_f.lower()
+            _reg_f_filt = [r for r in _reg_f_filt
+                           if _s in (r.get("full_name") or "").lower()
+                           or _s in (r.get("student_number") or "").lower()]
+
+        st.caption(f"**{len(_reg_f_filt)}** étudiant(s) correspondant(s)")
+        st.divider()
+
+        for _r in _reg_f_filt:
+            _stt = _r.get("statut") or "inscrit"
+            _stt_lbl = _STATUT_LABELS_FAC.get(_stt, _stt)
+            _stt_clr = _STATUT_COLORS_FAC.get(_stt, "#64748B")
+            _nom = " ".join(filter(None, [_r.get("prenom",""), _r.get("nom",""),
+                                          _r.get("postnom","")])) or _r.get("full_name","—")
+            with st.expander(
+                f"**{_r['student_number']}** — {_nom}  ·  "
+                f"{_r.get('department_name','—')}  ·  {_stt_lbl}"
+            ):
+                _ca, _cb, _cc, _cd = st.columns(4)
+                _ca.markdown(f"**Département**  \n{_r.get('department_name','—')}")
+                _cb.markdown(f"**Filière / Option**  \n"
+                             f"{_r.get('filiere_name','—')} / {_r.get('option_name','—')}")
+                _cc.markdown(f"**Promotion**  \n{_r.get('promotion_name','—')}")
+                _cd.markdown(f"**Année acad.**  \n{_r.get('annee_academique','—')}")
+                st.markdown(
+                    f"<span style='background:{_stt_clr}22;color:{_stt_clr};"
+                    f"padding:3px 10px;border-radius:12px;font-size:0.8rem'>"
+                    f"{_stt_lbl}</span>"
+                    f"&nbsp;&nbsp;Compte : {'✅' if _r.get('is_registered') else '⚪ Non créé'}",
+                    unsafe_allow_html=True
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
