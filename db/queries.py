@@ -799,12 +799,17 @@ class StudentRegistryQueries:
                    d.name  AS department_name,
                    fi.name AS filiere_name,
                    o.name  AS option_name,
-                   pr.name AS promotion_name
+                   pr.name AS promotion_name,
+                   (s.id IS NOT NULL)  AS is_registered,
+                   s.id                AS student_account_id,
+                   s.username          AS student_username,
+                   s.is_active         AS student_is_active
             FROM student_registry r
             LEFT JOIN departments   d  ON r.department_id = d.id
             LEFT JOIN filieres      fi ON r.filiere_id    = fi.id
             LEFT JOIN options_etude o  ON r.option_id     = o.id
             LEFT JOIN promotions    pr ON r.promotion_id  = pr.id
+            LEFT JOIN students      s  ON s.registry_id   = r.id
             WHERE r.university_id=%s
             ORDER BY r.annee_academique DESC NULLS LAST,
                      d.name NULLS LAST,
@@ -820,12 +825,17 @@ class StudentRegistryQueries:
                    d.name  AS department_name,
                    fi.name AS filiere_name,
                    o.name  AS option_name,
-                   pr.name AS promotion_name
+                   pr.name AS promotion_name,
+                   (s.id IS NOT NULL)  AS is_registered,
+                   s.id                AS student_account_id,
+                   s.username          AS student_username,
+                   s.is_active         AS student_is_active
             FROM student_registry r
             LEFT JOIN departments   d  ON r.department_id = d.id
             LEFT JOIN filieres      fi ON r.filiere_id    = fi.id
             LEFT JOIN options_etude o  ON r.option_id     = o.id
             LEFT JOIN promotions    pr ON r.promotion_id  = pr.id
+            LEFT JOIN students      s  ON s.registry_id   = r.id
             WHERE r.department_id=%s
             ORDER BY r.annee_academique DESC NULLS LAST,
                      fi.name NULLS LAST, o.name NULLS LAST, r.full_name
@@ -1054,6 +1064,11 @@ class StudentQueries:
             WHERE pr.department_id = %s
             ORDER BY pr.name, cl.name, s.full_name
         """, (department_id,))
+
+    @staticmethod
+    def reset_password(student_id, new_password_hash):
+        execute_query("UPDATE students SET password_hash=%s WHERE id=%s",
+                      (new_password_hash, student_id), fetch="none")
 
     @staticmethod
     def update_last_login(student_id):

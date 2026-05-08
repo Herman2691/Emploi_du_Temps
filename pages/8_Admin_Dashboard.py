@@ -2500,58 +2500,140 @@ def render_admin_departement():
                                 st.error(f"Erreur : {e}")
 
         # ── Liste du registre ─────────────────────────────────────────────────
+        from db.queries import StudentQueries as _SQReg
+        from utils.auth import hash_password as _hp_reg
         st.divider()
         st.markdown(f"#### Liste d'inscription ({len(_reg_filtered)} étudiant(s))")
         if not _reg_filtered:
             st.info("Aucun étudiant correspondant aux filtres sélectionnés.")
         else:
             for reg in _reg_filtered:
-                _reg_status = "✅" if reg.get("is_registered") else "⚪"
-                nom_display = " ".join(filter(None, [
+                _has_account = bool(reg.get("is_registered"))
+                _reg_status  = "✅" if _has_account else "⚪"
+                nom_display  = " ".join(filter(None, [
                     reg.get("prenom",""), reg.get("nom",""), reg.get("postnom","")
                 ])) or reg.get("full_name","—")
-                _dept_lbl  = reg.get("department_name") or "—"
-                _fi_lbl    = reg.get("filiere_name") or reg.get("promotion_txt") or "—"
-                _opt_lbl   = reg.get("option_name") or reg.get("option_txt") or "—"
-                _pr_lbl    = reg.get("promotion_name") or "—"
-                _yr_lbl    = reg.get("annee_academique") or "—"
+                _dept_lbl = reg.get("department_name") or "—"
+                _fi_lbl   = reg.get("filiere_name") or reg.get("promotion_txt") or "—"
+                _opt_lbl  = reg.get("option_name") or reg.get("option_txt") or "—"
+                _pr_lbl   = reg.get("promotion_name") or "—"
+                _yr_lbl   = reg.get("annee_academique") or "—"
                 with st.expander(
                     f"{_reg_status} **{reg['student_number']}** — {nom_display}  "
                     f"·  {_fi_lbl} / {_opt_lbl}  ·  {_yr_lbl}"
                 ):
                     ca, cb, cc, cd = st.columns(4)
-                    ca.markdown(
-                        f"**Département**  \n{_dept_lbl}"
-                    )
-                    cb.markdown(
-                        f"**Filière / Option**  \n{_fi_lbl} / {_opt_lbl}"
-                    )
-                    cc.markdown(
-                        f"**Promotion**  \n{_pr_lbl}"
-                    )
-                    cd.markdown(
-                        f"**Année acad.**  \n{_yr_lbl}"
-                    )
+                    ca.markdown(f"**Département**  \n{_dept_lbl}")
+                    cb.markdown(f"**Filière / Option**  \n{_fi_lbl} / {_opt_lbl}")
+                    cc.markdown(f"**Promotion**  \n{_pr_lbl}")
+                    cd.markdown(f"**Année acad.**  \n{_yr_lbl}")
                     _ecole = reg.get("ecole_provenance")
                     _sexe  = reg.get("sexe")
                     if _ecole or _sexe:
-                        _info_parts = []
-                        if _ecole:
-                            _info_parts.append(f"École : {_ecole}")
-                        if _sexe:
-                            _info_parts.append(f"Sexe : {_sexe}")
-                        st.caption("  ·  ".join(_info_parts))
-                    st.caption(
-                        f"Compte : {'✅ Créé' if reg.get('is_registered') else '⚪ Non créé'}"
-                    )
+                        _parts = []
+                        if _ecole: _parts.append(f"École : {_ecole}")
+                        if _sexe:  _parts.append(f"Sexe : {_sexe}")
+                        st.caption("  ·  ".join(_parts))
+
+                    st.divider()
+
+                    # ── Compte étudiant ───────────────────────────────────────
+                    if _has_account:
+                        _stu_id     = reg.get("student_account_id")
+                        _stu_uname  = reg.get("student_username") or "—"
+                        _stu_active = reg.get("student_is_active", True)
+                        _state_lbl  = "🟢 Actif" if _stu_active else "🔴 Désactivé"
+                        _ca1, _ca2, _ca3 = st.columns([3, 1, 1])
+                        _ca1.markdown(
+                            f"**Compte :** ✅ @{_stu_uname} &nbsp; {_state_lbl}"
+                        )
+                        with _ca2:
+                            if _stu_active:
+                                if st.button("⛔ Désactiver",
+                                             key=f"deact_reg_{reg['id']}",
+                                             use_container_width=True):
+                                    _SQReg.set_active(_stu_id, False); st.rerun()
+                            else:
+                                if st.button("✅ Activer",
+                                             key=f"act_reg_{reg['id']}",
+                                             type="primary",
+                                             use_container_width=True):
+                                    _SQReg.set_active(_stu_id, True); st.rerun()
+                        with _ca3:
+                            if st.button("🔑 Réinit. MDP",
+                                         key=f"rst_reg_{reg['id']}",
+                                         use_container_width=True):
+                                st.session_state[f"show_reset_{reg['id']}"] = True
+                        if st.session_state.get(f"show_reset_{reg['id']}"):
+                            with st.form(f"reset_pwd_reg_{reg['id']}"):
+                                _np = st.text_input("Nouveau mot de passe",
+                                                    type="password",
+                                                    key=f"np_reg_{reg['id']}")
+                                if st.form_submit_button("Confirmer"):
+                                    if _np.strip():
+                                        _SQReg.reset_password(_stu_id, _hp_reg(_np))
+                                        st.session_state.pop(f"show_reset_{reg['id']}", None)
+                                        st.success("Mot de passe réinitialisé."); st.rerun()
+                                    else:
+                                        st.error("Mot de passe vide.")
+                    else:
+                        # Pas encore de compte — formulaire de création
+                        st.markdown("**Compte :** ⚪ Aucun compte — créer l'accès :")
+                        with st.form(f"create_acc_reg_{reg['id']}"):
+                            _uc, _pc = st.columns(2)
+                            _new_uname = _uc.text_input(
+                                "Nom d'utilisateur",
+                                value=reg["student_number"].lower(),
+                                key=f"uname_reg_{reg['id']}"
+                            )
+                            _new_pwd = _pc.text_input(
+                                "Mot de passe", type="password",
+                                key=f"pwd_reg_{reg['id']}"
+                            )
+                            _new_email = st.text_input(
+                                "Email (optionnel)",
+                                key=f"email_reg_{reg['id']}"
+                            )
+                            if st.form_submit_button("🔑 Créer le compte", type="primary"):
+                                if not _new_pwd.strip():
+                                    st.error("Mot de passe obligatoire.")
+                                else:
+                                    try:
+                                        _fn = " ".join(filter(None, [
+                                            reg.get("prenom",""), reg.get("nom",""),
+                                            reg.get("postnom","")
+                                        ])) or reg.get("full_name","")
+                                        _SQReg.create(
+                                            student_number=reg["student_number"],
+                                            full_name=_fn,
+                                            email=_new_email.strip() or None,
+                                            password_hash=_hp_reg(_new_pwd),
+                                            class_id=reg.get("class_id"),
+                                            university_id=reg["university_id"],
+                                            registry_id=reg["id"],
+                                            nom=reg.get("nom"),
+                                            postnom=reg.get("postnom"),
+                                            prenom=reg.get("prenom"),
+                                            username=_new_uname.strip(),
+                                        )
+                                        st.success(f"✅ Compte créé !"); st.rerun()
+                                    except Exception as _ce:
+                                        if "unique" in str(_ce).lower():
+                                            st.error("Ce numéro / nom d'utilisateur existe déjà.")
+                                        else:
+                                            st.error(f"Erreur : {_ce}")
+
+                    # ── Supprimer du registre ─────────────────────────────────
+                    st.divider()
                     if st.button("🗑️ Retirer du registre",
                                  key=f"del_reg_{reg['id']}"):
                         StudentRegistryQueries.delete(reg["id"])
                         st.success("Retiré du registre."); st.rerun()
 
-    # ── COMPTES ÉTUDIANTS ─────────────────────────────────────────────────────
+    # ── COMPTES ÉTUDIANTS (gestion uniquement) ────────────────────────────────
     with tabs[8]:
         from db.queries import StudentQueries as _SQ
+        from utils.auth import hash_password as _hp_stu
 
         try:
             all_students = _SQ.get_by_department(dept_id)
@@ -2565,6 +2647,11 @@ def render_admin_departement():
         c1.metric("Total comptes",  len(all_students))
         c2.metric("Actifs",         len(actifs_stu))
         c3.metric("Désactivés",     len(inactifs_stu))
+        st.info(
+            "Les comptes étudiants se créent depuis **Registre Étudiants** "
+            "(onglet précédent) — sélectionnez un inscrit sans compte et cliquez "
+            "« 🔑 Créer le compte »."
+        )
         st.divider()
 
         search_stu = st.text_input("🔍 Rechercher", placeholder="Nom ou numéro...",
@@ -2576,31 +2663,44 @@ def render_admin_departement():
                 continue
 
             is_active = stu.get("is_active", True)
-            icon      = "✅" if is_active else "⛔"
+            icon = "✅" if is_active else "⛔"
             with st.expander(
                 f"{icon} {stu['full_name']} — N° {stu['student_number']} "
                 f"· {stu.get('promotion_name','—')} / {stu.get('class_name','—')}"
             ):
-                col_info, col_btn = st.columns([3, 1])
-                with col_info:
-                    st.caption(
-                        f"👤 @{stu.get('username','—')} · "
-                        f"📧 {stu.get('email','—')}"
-                    )
-                with col_btn:
+                st.caption(
+                    f"👤 @{stu.get('username','—')} · "
+                    f"📧 {stu.get('email','—')}"
+                )
+                _sb1, _sb2, _sb3 = st.columns(3)
+                with _sb1:
                     if is_active:
                         if st.button("⛔ Désactiver",
                                      key=f"deact_stu_{stu['id']}",
                                      use_container_width=True):
-                            _SQ.set_active(stu["id"], False)
-                            st.warning(f"⛔ Compte de {stu['full_name']} désactivé."); st.rerun()
+                            _SQ.set_active(stu["id"], False); st.rerun()
                     else:
                         if st.button("✅ Activer",
                                      key=f"act_stu_{stu['id']}",
                                      type="primary",
                                      use_container_width=True):
-                            _SQ.set_active(stu["id"], True)
-                            st.success(f"✅ Compte de {stu['full_name']} activé."); st.rerun()
+                            _SQ.set_active(stu["id"], True); st.rerun()
+                with _sb2:
+                    if st.button("🔑 Réinit. MDP",
+                                 key=f"rst_stu_{stu['id']}",
+                                 use_container_width=True):
+                        st.session_state[f"show_rst_stu_{stu['id']}"] = True
+                if st.session_state.get(f"show_rst_stu_{stu['id']}"):
+                    with st.form(f"rst_stu_form_{stu['id']}"):
+                        _np2 = st.text_input("Nouveau mot de passe", type="password",
+                                             key=f"np_stu_{stu['id']}")
+                        if st.form_submit_button("Confirmer"):
+                            if _np2.strip():
+                                _SQ.reset_password(stu["id"], _hp_stu(_np2))
+                                st.session_state.pop(f"show_rst_stu_{stu['id']}", None)
+                                st.success("Mot de passe réinitialisé."); st.rerun()
+                            else:
+                                st.error("Mot de passe vide.")
 
     # ── RÉSULTATS D'EXAMENS ───────────────────────────────────────────────────
     with tabs[9]:
