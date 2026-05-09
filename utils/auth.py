@@ -166,6 +166,57 @@ def login_student(login_input: str, university_id: int, password: str):
     return True, f"Bienvenue, {display_name or student['student_number']} !"
 
 
+def login_unified(identifier: str, password: str):
+    """Connexion unifiée : essaie admin/prof puis étudiant.
+    Retourne (success, message, user_type) où user_type est 'admin' ou 'student'."""
+    if not identifier or not password:
+        return False, "Identifiant et mot de passe requis.", None
+
+    # Essai admin/prof
+    success, msg = login(identifier.strip(), password)
+    if success:
+        return True, msg, "admin"
+
+    # Essai étudiant (toutes universités)
+    try:
+        student = StudentQueries.get_by_login_global(identifier)
+    except Exception as e:
+        return False, f"Erreur de connexion : {e}", None
+
+    if not student:
+        return False, "Identifiant ou mot de passe incorrect.", None
+    if not verify_password(password, student["password_hash"]):
+        return False, "Identifiant ou mot de passe incorrect.", None
+    if not student.get("is_active"):
+        return False, "Ce compte est désactivé.", None
+
+    prenom = student.get("prenom") or ""
+    nom    = student.get("nom") or student.get("full_name") or ""
+    display_name = f"{prenom} {nom}".strip() or student.get("full_name", "")
+
+    st.session_state["student"] = {
+        "id":             student["id"],
+        "student_number": student["student_number"],
+        "full_name":      student.get("full_name") or display_name,
+        "display_name":   display_name,
+        "nom":            student.get("nom"),
+        "postnom":        student.get("postnom"),
+        "prenom":         student.get("prenom"),
+        "username":       student.get("username"),
+        "email":          student.get("email"),
+        "class_id":       student.get("class_id"),
+        "university_id":  student["university_id"],
+    }
+    st.session_state["student_authenticated"] = True
+
+    try:
+        StudentQueries.update_last_login(student["id"])
+    except Exception:
+        pass
+
+    return True, f"Bienvenue, {display_name or student['student_number']} !", "student"
+
+
 def register_student(student_number: str, university_id: int,
                      username: str, password: str, confirm: str):
     if not student_number or not username or not password:

@@ -1,11 +1,8 @@
 # pages/12_Prof_Auth.py
 import streamlit as st
-from utils.auth import login, get_current_user
-from utils.components import auth_page_css
 
-user = get_current_user()
-if user and user.get("role") == "professeur":
-    st.switch_page("pages/9_Prof_Dashboard.py")
+# Redirection vers le login unifié
+st.switch_page("pages/1_Accueil.py")
 
 st.markdown(auth_page_css("#7C3AED", "#6D28D9"), unsafe_allow_html=True)
 

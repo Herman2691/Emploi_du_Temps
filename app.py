@@ -56,13 +56,13 @@ elif student:
     admin_pages = [st.Page("pages/7_Admin_Login.py", title="Connexion Admin",  icon="🔑")]
 
 else:
-    # Non connecté → Accueil par défaut
+    # Non connecté → Login unifié par défaut
     public_pages = [
-        st.Page("pages/1_Accueil.py", title="Accueil",     icon="🏠", default=True),
-        st.Page("pages/2_Horaire.py", title="Mon Horaire", icon="📅"),
+        st.Page("pages/1_Accueil.py", title="Connexion",   icon="🔑", default=True),
+        st.Page("pages/2_Horaire.py", title="Emploi du Temps", icon="📅"),
     ]
     student_pages = [
-        st.Page("pages/10_Student_Auth.py",      title="Espace Étudiant", icon="🎓"),
+        st.Page("pages/10_Student_Auth.py",      title="Créer un compte", icon="📝"),
         st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚"),
     ]
     prof_pages    = [st.Page("pages/12_Prof_Auth.py",  title="Espace Professeur", icon="👨‍🏫")]

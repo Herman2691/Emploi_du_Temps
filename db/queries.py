@@ -1764,6 +1764,16 @@ class StudentQueries:
               login_input.strip()), fetch="one")
 
     @staticmethod
+    def get_by_login_global(login_input):
+        """Cherche un étudiant actif par matricule ou username, toutes universités."""
+        return execute_query("""
+            SELECT * FROM students
+            WHERE (student_number=%s OR username=%s)
+              AND is_active=TRUE
+            LIMIT 1
+        """, (login_input.strip().upper(), login_input.strip()), fetch="one")
+
+    @staticmethod
     def exists_username(username):
         return execute_query(
             "SELECT id FROM students WHERE username=%s",
