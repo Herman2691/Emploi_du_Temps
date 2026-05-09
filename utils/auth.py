@@ -225,6 +225,32 @@ def register_student(student_number: str, university_id: int,
         return False, f"Erreur lors de la création : {e}"
 
 
+def change_student_password(student_id: int, current_password: str,
+                            new_password: str, confirm: str):
+    if not current_password or not new_password:
+        return False, "Tous les champs sont obligatoires."
+    if len(new_password) < 8:
+        return False, "Le nouveau mot de passe doit contenir au moins 8 caractères."
+    if new_password != confirm:
+        return False, "Les mots de passe ne correspondent pas."
+
+    try:
+        student = StudentQueries.get_by_id(student_id)
+    except Exception as e:
+        return False, f"Erreur : {e}"
+
+    if not student:
+        return False, "Compte introuvable."
+    if not verify_password(current_password, student["password_hash"]):
+        return False, "Mot de passe actuel incorrect."
+
+    try:
+        StudentQueries.reset_password(student_id, hash_password(new_password))
+        return True, "Mot de passe modifié avec succès."
+    except Exception as e:
+        return False, f"Erreur lors de la modification : {e}"
+
+
 def create_admin(name, email, password, role,
                  university_id=None, faculty_id=None, department_id=None):
     if not name or not name.strip():

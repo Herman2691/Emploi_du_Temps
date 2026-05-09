@@ -1,4 +1,4 @@
-# pages/8_Admin_Dashboard.py
+﻿# pages/8_Admin_Dashboard.py
 import streamlit as st
 from utils.auth import require_auth, get_current_user, ROLE_LABELS, create_admin
 from utils.components import inject_global_css, page_header, role_badge, announcement_card, render_schedule_table
@@ -8,6 +8,37 @@ require_auth()
 
 user = get_current_user()
 role = user["role"]
+
+
+# ── Helper pagination ─────────────────────────────────────────────────────────
+def _paginate(items, key, page_size=10):
+    """Affiche les contrôles de pagination et retourne la tranche courante."""
+    n = len(items)
+    if n == 0:
+        return []
+    n_pages = max(1, (n + page_size - 1) // page_size)
+    if key not in st.session_state:
+        st.session_state[key] = 0
+    page = max(0, min(st.session_state[key], n_pages - 1))
+    st.session_state[key] = page
+    start = page * page_size
+    end   = min(start + page_size, n)
+    c1, c2, c3 = st.columns([1, 5, 1])
+    with c1:
+        if st.button("◀", key=f"{key}_prev", disabled=(page == 0),
+                     use_container_width=True):
+            st.session_state[key] = page - 1; st.rerun()
+    with c2:
+        st.caption(
+            f"Page **{page + 1}** / {n_pages} &nbsp;·&nbsp; "
+            f"{n} résultat(s) &nbsp;·&nbsp; affiché(s) : {start + 1}–{end}"
+        )
+    with c3:
+        if st.button("▶", key=f"{key}_next", disabled=(page == n_pages - 1),
+                     use_container_width=True):
+            st.session_state[key] = page + 1; st.rerun()
+    return items[start:end]
+
 
 # ── En-tête (masqué pour admin_universite qui gère le sien) ──────────────────
 if role != "admin_universite":
@@ -73,7 +104,7 @@ def render_super_admin():
         # ── Universités actives ───────────────────────────────────────────────
         if active_unis:
             st.markdown("#### ✅ Universités actives")
-            for uni in active_unis:
+            for uni in _paginate(active_unis, "pg_active_unis"):
                 with st.expander(f"🏛️ {uni['name']}"):
                     # Logo display (outside form)
                     from utils.components import get_logo_display_url as _gldurl
@@ -134,7 +165,7 @@ def render_super_admin():
         # ── Universités désactivées ───────────────────────────────────────────
         if inactive_unis:
             st.markdown("#### ⛔ Universités désactivées")
-            for uni in inactive_unis:
+            for uni in _paginate(inactive_unis, "pg_inactive_unis"):
                 with st.expander(f"🔒 {uni['name']} (désactivée)"):
                     st.caption(f"📍 {uni.get('address','—')}")
                     if st.button("♻️ Réactiver", key=f"reactivate_uni_{uni['id']}", type="primary"):
@@ -227,7 +258,7 @@ def render_super_admin():
 
             if active_admins:
                 st.markdown("#### ✅ Comptes actifs")
-                for adm in active_admins:
+                for adm in _paginate(active_admins, "pg_active_admins"):
                     role_icon = {"admin_universite":"🔵","admin_faculte":"🟢","admin_departement":"🟡"}.get(adm["role"],"⚪")
                     uni_label = adm.get("university_name") or "—"
                     with st.expander(f"{role_icon} {adm['name']} — {ROLE_LABELS.get(adm['role'], adm['role'])} · {uni_label}"):
@@ -286,7 +317,7 @@ def render_super_admin():
 
             if inactive_admins:
                 st.markdown("#### 🔒 Comptes désactivés")
-                for adm in inactive_admins:
+                for adm in _paginate(inactive_admins, "pg_inactive_admins"):
                     with st.expander(f"🔒 {adm['name']} ({adm['email']})"):
                         col1, col2 = st.columns(2)
                         with col1:
@@ -438,7 +469,7 @@ def render_admin_universite():
 
         if not faculties:
             st.info("Aucune faculté créée pour l'instant.")
-        for fac in faculties:
+        for fac in _paginate(faculties, "pg_uni_facs"):
             # Compter les départements de cette faculté
             try:
                 depts = DepartmentQueries.get_by_faculty(fac["id"])
@@ -486,7 +517,7 @@ def render_admin_universite():
                             except Exception as e:
                                 st.error(str(e))
 
-            for fac in faculties:
+            for fac in _paginate(faculties, "pg_uni_depts_outer"):
                 try:
                     depts = DepartmentQueries.get_by_faculty(fac["id"])
                 except Exception:
@@ -530,22 +561,49 @@ def render_admin_universite():
         c2.metric("Inactifs", len(inactifs))
         st.divider()
 
+        # ── Créer un professeur ────────────────────────────────────────────
+        with st.expander("➕ Créer un professeur"):
+            with st.form("create_prof_uni"):
+                _cp1, _cp2 = st.columns(2)
+                _pn  = _cp1.text_input("Nom complet *")
+                _pe  = _cp2.text_input("Email")
+                _cp3, _cp4 = st.columns(2)
+                _pph = _cp3.text_input("Téléphone")
+                _pst = _cp4.selectbox("Statut *",
+                                      ["Contractuel", "Permanent", "Vacataire"])
+                if st.form_submit_button("Créer", type="primary"):
+                    if not _pn.strip():
+                        st.error("Nom obligatoire.")
+                    else:
+                        try:
+                            ProfessorQueries.create(
+                                _pn.strip(), _pe.strip() or None,
+                                _pph.strip() or None, uni_id, _pst
+                            )
+                            st.success("✅ Professeur créé ! L'admin faculté peut maintenant l'affilier.")
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(f"Erreur : {_e}")
+
         # ── Recherche ──────────────────────────────────────────────────────
         search = st.text_input("🔍 Rechercher un professeur", placeholder="Nom...")
         profs_filtered = [p for p in all_profs
                           if not search or search.lower() in p["name"].lower()]
 
-        for prof in profs_filtered:
-            is_active   = prof.get("is_active", True)
-            statut_icon = "🟢" if prof.get("statut") == "Contractuel" else "🔵"
-            state_icon  = "✅" if is_active else "⛔"
+        _STATUT_ICONS_UNI = {"Permanent": "🟣", "Contractuel": "🟢", "Vacataire": "🔵"}
+        for prof in _paginate(profs_filtered, "pg_uni_profs"):
+            is_active    = prof.get("is_active", True)
+            state_icon   = "✅" if is_active else "⛔"
+            s_icon       = _STATUT_ICONS_UNI.get(prof.get("statut",""), "⚪")
+            acc_icon     = "🔑" if prof.get("user_id") else "🔓"
+            affiliations = prof.get("affiliations") or "Aucune affiliation"
             with st.expander(
-                f"{state_icon} {prof['name']} · {statut_icon} {prof.get('statut','—')} "
-                f"— {prof.get('department_name','—')} / {prof.get('faculty_name','—')}"
+                f"{state_icon} {prof['name']} · {s_icon} {prof.get('statut','—')} · {acc_icon}"
             ):
                 col_info, col_btn = st.columns([3, 1])
                 with col_info:
                     st.caption(f"📧 {prof.get('email','—')} · 📞 {prof.get('phone','—')}")
+                    st.caption(f"🏛️ Affiliations : {affiliations}")
                 with col_btn:
                     if is_active:
                         if st.button("⛔ Désactiver",
@@ -561,6 +619,96 @@ def render_admin_universite():
                             ProfessorQueries.set_active(prof["id"], True)
                             st.success(f"✅ {prof['name']} activé."); st.rerun()
 
+                # ── Gestion du compte de connexion ────────────────────────
+                st.divider()
+                st.markdown("##### 🔑 Compte de connexion")
+                from db.queries import UserQueries as _UQp
+                from utils.auth import hash_password as _hpu
+
+                if not prof.get("user_id"):
+                    st.caption("⚫ Aucun compte de connexion.")
+                    with st.form(f"create_acc_uni_{prof['id']}"):
+                        _ca1, _ca2 = st.columns(2)
+                        _ca_email = _ca1.text_input(
+                            "Email de connexion *",
+                            value=prof.get("email") or ""
+                        )
+                        _ca_pwd  = _ca2.text_input(
+                            "Mot de passe * (min 8 car.)", type="password"
+                        )
+                        _ca_pwd2 = st.text_input("Confirmer le mot de passe *",
+                                                  type="password")
+                        if st.form_submit_button("Créer le compte", type="primary"):
+                            if not _ca_email or "@" not in _ca_email:
+                                st.error("Email invalide.")
+                            elif not _ca_pwd or len(_ca_pwd) < 8:
+                                st.error("Mot de passe : minimum 8 caractères.")
+                            elif _ca_pwd != _ca_pwd2:
+                                st.error("Les mots de passe ne correspondent pas.")
+                            else:
+                                try:
+                                    _existing = _UQp.get_by_email(_ca_email.strip())
+                                    if _existing:
+                                        st.error("Cet email est déjà utilisé.")
+                                    else:
+                                        _UQp.create_professor_account(
+                                            name=prof["name"],
+                                            email=_ca_email.strip().lower(),
+                                            password_hash=_hpu(_ca_pwd),
+                                            university_id=uni_id,
+                                            faculty_id=None,
+                                            department_id=None,
+                                            professor_id=prof["id"],
+                                        )
+                                        st.success(
+                                            f"✅ Compte créé pour {prof['name']} !"
+                                        ); st.rerun()
+                                except Exception as _e:
+                                    st.error(f"Erreur : {_e}")
+                else:
+                    _acc_ok = prof.get("account_active")
+                    st.caption(
+                        f"{'✅' if _acc_ok else '⛔'} "
+                        f"Email : {prof.get('account_email','—')}"
+                    )
+                    if not _acc_ok:
+                        st.warning("Compte désactivé.")
+                    _cr1, _cr2 = st.columns(2)
+                    with _cr1:
+                        with st.form(f"reset_pwd_uni_{prof['id']}"):
+                            _np  = st.text_input("Nouveau mot de passe *",
+                                                  type="password")
+                            _np2 = st.text_input("Confirmer *", type="password")
+                            if st.form_submit_button("🔑 Réinitialiser"):
+                                if not _np or len(_np) < 8:
+                                    st.error("Min 8 caractères.")
+                                elif _np != _np2:
+                                    st.error("Mots de passe différents.")
+                                else:
+                                    try:
+                                        _UQp.update_password(
+                                            prof["user_id"], _hpu(_np)
+                                        )
+                                        st.success("✅ Mot de passe mis à jour !")
+                                    except Exception as _e:
+                                        st.error(str(_e))
+                    with _cr2:
+                        if _acc_ok:
+                            if st.button("⛔ Désactiver le compte",
+                                         key=f"deact_acc_uni_{prof['id']}",
+                                         use_container_width=True):
+                                _UQp.deactivate(prof["user_id"])
+                                st.warning("Compte désactivé."); st.rerun()
+                        else:
+                            if st.button("✅ Activer le compte",
+                                         key=f"act_acc_uni_{prof['id']}",
+                                         type="primary",
+                                         use_container_width=True):
+                                from db.connection import execute_query as _eqp
+                                _eqp("UPDATE users SET is_active=TRUE WHERE id=%s",
+                                     (prof["user_id"],), fetch="none")
+                                st.success("✅ Compte activé !"); st.rerun()
+
     # ── ONGLET 4 : ADMINISTRATEURS ────────────────────────────────────────────
     with tab_admins:
         try:
@@ -575,7 +723,7 @@ def render_admin_universite():
             st.error(str(e)); admins_uni = []
 
         st.markdown(f"**{len(admins_uni)} compte(s) administrateur(s)**")
-        for adm in admins_uni:
+        for adm in _paginate(admins_uni, "pg_uni_admins_list"):
             role_icon = {"admin_faculte": "🟢", "admin_departement": "🟡",
                          "professeur": "🟣"}.get(adm["role"], "⚪")
             st.markdown(
@@ -669,7 +817,7 @@ def render_admin_universite():
         if not announcements:
             st.info("Aucun communiqué publié.")
         else:
-            for ann in announcements:
+            for ann in _paginate(announcements, "pg_uni_ann"):
                 with st.expander(f"{'📌 ' if ann.get('is_pinned') else ''}📢 {ann['title']}"):
                     announcement_card(ann)
                     if st.button("🗑️ Supprimer", key=f"del_ann_uni_{ann['id']}"):
@@ -732,7 +880,7 @@ def render_admin_universite():
         st.caption(f"**{len(_reg_u_filt)}** étudiant(s) correspondant(s)")
         st.divider()
 
-        for _r in _reg_u_filt:
+        for _r in _paginate(_reg_u_filt, "pg_uni_etu", page_size=15):
             _stt = _r.get("statut") or "inscrit"
             _stt_lbl = _STATUT_LABELS_UNI.get(_stt, _stt)
             _stt_clr = _STATUT_COLORS_UNI.get(_stt, "#64748B")
@@ -761,7 +909,8 @@ def render_admin_universite():
 # ADMIN FACULTÉ
 # ══════════════════════════════════════════════════════════════════════════════
 def render_admin_faculte():
-    from db.queries import DepartmentQueries, FacultyQueries
+    from db.queries import (DepartmentQueries, FacultyQueries,
+                             ProfessorQueries, ProfessorFacultyAffiliationQueries)
 
     fac_id = user["faculty_id"]
     uni_id = user["university_id"]
@@ -774,8 +923,8 @@ def render_admin_faculte():
         st.error(f"Erreur : {e}"); return
 
     st.subheader(f"📚 {fac['name'] if fac else 'Votre faculté'}")
-    tab_dept, tab_admins, tab_etu_fac = st.tabs([
-        "🏢 Départements", "👥 Admins Département", "🎓 Étudiants"
+    tab_dept, tab_profs_fac, tab_admins, tab_etu_fac = st.tabs([
+        "🏢 Départements", "👨‍🏫 Professeurs", "👥 Admins Département", "🎓 Étudiants"
     ])
 
     with tab_dept:
@@ -798,7 +947,7 @@ def render_admin_faculte():
                         DepartmentQueries.create(name.strip(), fac_id, desc)
                         st.success("✅ Département créé !"); st.rerun()
 
-        for dept in departments:
+        for dept in _paginate(departments, "pg_fac_depts"):
             with st.expander(f"🏢 {dept['name']}"):
                 with st.form(f"edit_dept_{dept['id']}"):
                     nn = st.text_input("Nom",        value=dept["name"])
@@ -818,6 +967,77 @@ def render_admin_faculte():
                                 st.success("✅ Département supprimé."); st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur : {e}")
+
+    # ── ONGLET PROFESSEURS ────────────────────────────────────────────────────
+    with tab_profs_fac:
+        try:
+            _aff_profs   = ProfessorQueries.get_by_faculty(fac_id)
+            _pool_profs  = ProfessorQueries.get_unaffiliated(uni_id, fac_id)
+        except Exception as e:
+            st.error(f"Erreur : {e}"); _aff_profs = []; _pool_profs = []
+
+        _fp1, _fp2 = st.columns(2)
+        _fp1.metric("Affiliés à cette faculté", len(_aff_profs))
+        _fp2.metric("Disponibles dans le pool", len(_pool_profs))
+        st.divider()
+
+        # ── Affilier un prof du pool ───────────────────────────────────────
+        with st.expander("➕ Affilier un professeur"):
+            if not _pool_profs:
+                st.info("Tous les professeurs de l'université sont déjà affiliés à cette faculté.")
+            else:
+                with st.form("affiliate_prof_fac"):
+                    _sel_pool = st.selectbox(
+                        "Professeur *", options=_pool_profs,
+                        format_func=lambda p: f"{p['name']} ({p.get('statut','—')})"
+                    )
+                    _aff_status = st.radio(
+                        "Statut d'affiliation *",
+                        ["permanent", "visiteur"],
+                        format_func=lambda s: "🏛️ Permanent (faculté principale)" if s == "permanent"
+                                              else "🔄 Visiteur (enseigne en plus ici)",
+                        horizontal=True
+                    )
+                    if st.form_submit_button("Affilier", type="primary"):
+                        try:
+                            ProfessorFacultyAffiliationQueries.create(
+                                _sel_pool["id"], fac_id, _aff_status
+                            )
+                            st.success(f"✅ {_sel_pool['name']} affilié comme {_aff_status} !")
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(f"Erreur : {_e}")
+
+        # ── Liste des profs affiliés ───────────────────────────────────────
+        _STATUT_AFF = {"permanent": "🏛️ Permanent", "visiteur": "🔄 Visiteur"}
+        _STATUT_EMPL = {"Permanent": "🟣", "Contractuel": "🟢", "Vacataire": "🔵"}
+        for _pf in _paginate(_aff_profs, "pg_fac_profs"):
+            _aff_lbl  = _STATUT_AFF.get(_pf.get("affiliation_status",""), "—")
+            _empl_ico = _STATUT_EMPL.get(_pf.get("statut",""), "⚪")
+            with st.expander(
+                f"{_aff_lbl} · {_pf['name']} — {_empl_ico} {_pf.get('statut','—')}"
+            ):
+                st.caption(f"📧 {_pf.get('email','—')} · 📞 {_pf.get('phone','—')}")
+                _c1, _c2 = st.columns(2)
+                with _c1:
+                    _new_aff_st = st.selectbox(
+                        "Statut d'affiliation",
+                        ["permanent", "visiteur"],
+                        index=0 if _pf.get("affiliation_status") == "permanent" else 1,
+                        format_func=lambda s: "🏛️ Permanent" if s == "permanent" else "🔄 Visiteur",
+                        key=f"aff_status_{_pf['id']}"
+                    )
+                    if st.button("💾 Mettre à jour", key=f"upd_aff_{_pf['id']}",
+                                 use_container_width=True):
+                        ProfessorFacultyAffiliationQueries.update_status(
+                            _pf["id"], fac_id, _new_aff_st
+                        )
+                        st.success("Statut mis à jour."); st.rerun()
+                with _c2:
+                    if st.button("🔗 Retirer l'affiliation", key=f"rm_aff_{_pf['id']}",
+                                 use_container_width=True):
+                        ProfessorFacultyAffiliationQueries.remove(_pf["id"], fac_id)
+                        st.warning(f"{_pf['name']} retiré de cette faculté."); st.rerun()
 
     with tab_admins:
         try:
@@ -900,7 +1120,7 @@ def render_admin_faculte():
         st.caption(f"**{len(_reg_f_filt)}** étudiant(s) correspondant(s)")
         st.divider()
 
-        for _r in _reg_f_filt:
+        for _r in _paginate(_reg_f_filt, "pg_fac_etu", page_size=15):
             _stt = _r.get("statut") or "inscrit"
             _stt_lbl = _STATUT_LABELS_FAC.get(_stt, _stt)
             _stt_clr = _STATUT_COLORS_FAC.get(_stt, "#64748B")
@@ -960,15 +1180,26 @@ def render_admin_departement():
     )
     st.subheader(f"🏢 {dept['name'] if dept else 'Votre département'}{_ay_badge}")
 
-    tabs = st.tabs(["🎓 Promotions", "🏫 Salles", "📘 Cours",
-                    "👨‍🏫 Professeurs", "👨‍💼 Comptes Prof",
-                    "📅 Emploi du Temps", "📢 Communiqués",
-                    "👨‍🎓 Registre Étudiants", "🔐 Comptes Étudiants",
-                    "📊 Résultats",
-                    "🔬 Filières", "🗂️ Options", "📚 Inscriptions",
-                    "✏️ Demandes de modification",
-                    "📍 Présences", "📩 Réclamations",
-                    "📋 Bulletins", "🗓️ Années acad.", "📈 Analyses"])
+    tabs = st.tabs([
+        "🎓 Promotions",              # 0
+        "🏫 Groupes & Salles",        # 1
+        "🔬 Filières",                # 2
+        "🗂️ Options",                 # 3
+        "📘 Cours",                   # 4
+        "👨‍🏫 Professeurs",            # 5
+        "👨‍💼 Comptes Prof",           # 6
+        "📅 Emploi du Temps",         # 7
+        "👨‍🎓 Registre Étudiants",     # 8
+        "📚 Inscriptions",            # 9
+        "📊 Résultats",               # 10
+        "📋 Bulletins",               # 11
+        "📍 Présences",               # 12
+        "📢 Communiqués",             # 13
+        "✏️ Demandes de modification", # 14
+        "📩 Réclamations",            # 15
+        "🗓️ Années acad.",            # 16
+        "📈 Analyses",                # 17
+    ])
 
     # ── PROMOTIONS ────────────────────────────────────────────────────────────
     with tabs[0]:
@@ -997,7 +1228,7 @@ def render_admin_departement():
                     else:
                         st.error("Tous les champs sont obligatoires.")
 
-        for promo in promotions:
+        for promo in _paginate(promotions, "pg_dept_promos"):
             _rec_tag = " 🆕" if promo.get("is_recrutement") else ""
             with st.expander(f"🎓 {promo['name']} ({promo['academic_year']}){_rec_tag}"):
                 with st.form(f"edit_promo_{promo['id']}"):
@@ -1023,8 +1254,18 @@ def render_admin_departement():
                             except Exception as e:
                                 st.error(f"Erreur : {e}")
 
-    # ── CLASSES ───────────────────────────────────────────────────────────────
+    # ── GROUPES & SALLES ──────────────────────────────────────────────────────
     with tabs[1]:
+        from db.queries import RoomQueries as _RQ
+
+        _uni_id_t1 = dept.get("university_id") or user.get("university_id")
+
+        # ════════════════════════════════════════════════════════════════════
+        # SECTION 1 : GROUPES / CLASSES
+        # ════════════════════════════════════════════════════════════════════
+        st.markdown("### 👥 Groupes / Classes")
+        st.caption("Un groupe est la division d'une promotion (ex : L1 A, L1 B).")
+
         try:
             promotions = PromotionQueries.get_by_department(dept_id)
         except Exception as e:
@@ -1042,48 +1283,176 @@ def render_admin_departement():
                 except Exception as e:
                     st.error(f"Erreur : {e}"); return
 
-                st.metric("Salles", len(classes))
+                st.metric("Groupes", len(classes))
                 st.divider()
 
-                with st.expander("➕ Ajouter une salle"):
+                with st.expander("➕ Ajouter un groupe"):
                     with st.form("add_class"):
-                        name     = st.text_input("Nom (ex: L1 A) *")
-                        capacity = st.number_input("Capacité", min_value=1, max_value=200, value=30)
+                        name     = st.text_input("Nom du groupe (ex: L1 A, L2 B) *")
+                        capacity = st.number_input("Effectif max", min_value=1,
+                                                   max_value=500, value=30)
                         if st.form_submit_button("Créer", type="primary"):
                             if name.strip():
-                                ClassQueries.create(name.strip(), promo_sel["id"], int(capacity))
-                                st.success("✅ Salle créée !"); st.rerun()
+                                ClassQueries.create(name.strip(), promo_sel["id"],
+                                                    int(capacity))
+                                st.success("✅ Groupe créé !"); st.rerun()
                             else:
                                 st.error("Nom obligatoire.")
 
                 for cls in classes:
-                    with st.expander(f"🏫 {cls['name']}"):
+                    with st.expander(f"👥 {cls['name']} · {cls.get('capacity',0)} étudiants"):
                         with st.form(f"edit_cls_{cls['id']}"):
                             nn = st.text_input("Nom",      value=cls["name"])
-                            nc = st.number_input("Capacité", value=cls.get("capacity",30),
-                                                 min_value=1, max_value=200)
+                            nc = st.number_input("Effectif max",
+                                                 value=cls.get("capacity", 30),
+                                                 min_value=1, max_value=500)
                             col1, col2 = st.columns(2)
                             with col1:
                                 if st.form_submit_button("💾 Sauvegarder"):
                                     try:
-                                        ClassQueries.update(cls["id"],nn,int(nc))
-                                        st.success("✅ Salle mise à jour !"); st.rerun()
+                                        ClassQueries.update(cls["id"], nn, int(nc))
+                                        st.success("✅ Groupe mis à jour !"); st.rerun()
                                     except Exception as e:
                                         st.error(f"Erreur : {e}")
                             with col2:
                                 if st.form_submit_button("🗑️ Supprimer"):
                                     try:
                                         ClassQueries.delete(cls["id"])
-                                        st.success("✅ Salle supprimée."); st.rerun()
+                                        st.success("✅ Groupe supprimé."); st.rerun()
                                     except Exception as e:
                                         st.error(f"Erreur : {e}")
 
+        # ════════════════════════════════════════════════════════════════════
+        # SECTION 2 : SALLES PHYSIQUES
+        # ════════════════════════════════════════════════════════════════════
+        st.divider()
+        st.markdown("### 🏫 Salles physiques")
+        st.caption("Salles de cours, amphis, labos — partagés par tout l'établissement.")
+
+        try:
+            _all_rooms = _RQ.get_by_department(dept_id) or []
+        except Exception as e:
+            st.error(f"Erreur : {e}"); _all_rooms = []
+
+        _rm1, _rm2, _rm3, _rm4 = st.columns(4)
+        _rm1.metric("Total salles", len(_all_rooms))
+        _rm2.metric("Amphis",  sum(1 for r in _all_rooms if r.get("room_type")=="amphi"))
+        _rm3.metric("Labos",   sum(1 for r in _all_rooms if r.get("room_type") in ("labo","salle_tp","salle_info")))
+        _rm4.metric("Capacité totale", sum(r.get("capacity",0) for r in _all_rooms))
+        st.divider()
+
+        with st.expander("➕ Ajouter une salle"):
+            with st.form("add_room_form"):
+                _rn1, _rn2 = st.columns([3, 1])
+                _r_name = _rn1.text_input("Nom de la salle *", placeholder="ex: Salle B2")
+                _r_code = _rn2.text_input("Code", placeholder="ex: B2")
+                _ra1, _ra2, _ra3 = st.columns(3)
+                _r_type     = _ra1.selectbox("Type", _RQ.TYPES,
+                                              format_func=lambda t: _RQ.TYPE_LABELS[t])
+                _r_capacity = _ra2.number_input("Capacité", min_value=0,
+                                                 max_value=2000, value=30)
+                _r_building = _ra3.text_input("Bâtiment", placeholder="ex: Bloc A")
+                _rb1, _rb2 = st.columns(2)
+                _r_floor    = _rb1.text_input("Étage", placeholder="ex: RDC, 1er")
+                if st.form_submit_button("✅ Créer", type="primary"):
+                    if _r_name.strip():
+                        try:
+                            _RQ.create(
+                                name=_r_name.strip(),
+                                code=_r_code.strip() or None,
+                                capacity=int(_r_capacity),
+                                room_type=_r_type,
+                                building=_r_building.strip() or None,
+                                floor=_r_floor.strip() or None,
+                                university_id=_uni_id_t1,
+                                department_id=dept_id,
+                            )
+                            st.success("✅ Salle créée !"); st.rerun()
+                        except Exception as _re:
+                            st.error(f"Erreur : {_re}")
+                    else:
+                        st.error("Le nom est obligatoire.")
+
+        _TYPE_ICON = {
+            "amphi": "🎭", "labo": "🔬", "salle_tp": "🖥️",
+            "salle_info": "💻", "salle": "🏫", "autre": "📦",
+        }
+        for _room in _paginate(_all_rooms, "pg_dept_rooms"):
+            _ric = _TYPE_ICON.get(_room.get("room_type","salle"), "🏫")
+            _r_lbl = (f"{_ric} {_room['name']}"
+                      f"{' · ' + _room['code'] if _room.get('code') else ''}"
+                      f" · {_RQ.TYPE_LABELS.get(_room.get('room_type','salle'), '')}"
+                      f" · {_room.get('capacity',0)} places"
+                      f"{' · ' + _room['building'] if _room.get('building') else ''}")
+            with st.expander(_r_lbl):
+                with st.form(f"edit_room_{_room['id']}"):
+                    _er1, _er2 = st.columns([3, 1])
+                    _er_name = _er1.text_input("Nom *", value=_room["name"])
+                    _er_code = _er2.text_input("Code",  value=_room.get("code",""))
+                    _ea1, _ea2, _ea3 = st.columns(3)
+                    _er_type = _ea1.selectbox(
+                        "Type", _RQ.TYPES,
+                        index=(_RQ.TYPES.index(_room["room_type"])
+                               if _room.get("room_type") in _RQ.TYPES else 0),
+                        format_func=lambda t: _RQ.TYPE_LABELS[t],
+                        key=f"rtype_{_room['id']}"
+                    )
+                    _er_cap  = _ea2.number_input("Capacité",
+                                                  value=int(_room.get("capacity",0)),
+                                                  min_value=0, max_value=2000,
+                                                  key=f"rcap_{_room['id']}")
+                    _er_bld  = _ea3.text_input("Bâtiment",
+                                                value=_room.get("building",""),
+                                                key=f"rbld_{_room['id']}")
+                    _er_flr  = st.text_input("Étage", value=_room.get("floor",""),
+                                              key=f"rflr_{_room['id']}")
+                    _eb1, _eb2 = st.columns(2)
+                    with _eb1:
+                        if st.form_submit_button("💾 Sauvegarder"):
+                            try:
+                                _RQ.update(
+                                    _room["id"], _er_name, _er_code or None,
+                                    int(_er_cap), _er_type,
+                                    _er_bld or None, _er_flr or None,
+                                    department_id=dept_id,
+                                )
+                                st.success("✅ Salle mise à jour !"); st.rerun()
+                            except Exception as _re:
+                                st.error(f"Erreur : {_re}")
+                    with _eb2:
+                        if st.form_submit_button("🗑️ Supprimer"):
+                            try:
+                                _RQ.delete(_room["id"])
+                                st.success("✅ Salle supprimée."); st.rerun()
+                            except Exception as _re:
+                                st.error(f"Erreur : {_re}")
+
     # ── COURS ─────────────────────────────────────────────────────────────────
-    with tabs[2]:
+    with tabs[4]:
         from db.queries import UEQueries as _UQT
         try:
-            courses   = CourseQueries.get_by_department(dept_id)
-            _ues_list = _UQT.get_by_department(dept_id) or []
+            _cours_promos = PromotionQueries.get_by_department(dept_id) or []
+            _cours_profs  = ProfessorQueries.get_by_department(dept_id) or []
+        except Exception as e:
+            st.error(f"Erreur : {e}"); return
+
+        # ── Filtre promotion ─────────────────────────────────────────────────
+        _promo_opts_c = [None] + _cours_promos
+        _sel_promo_c  = st.selectbox(
+            "Filtrer par promotion",
+            _promo_opts_c,
+            format_func=lambda p: "— Toutes les promotions —" if p is None else p["name"],
+            key="cours_promo_filter",
+        )
+        _filter_promo_id = _sel_promo_c["id"] if _sel_promo_c else None
+
+        try:
+            if _filter_promo_id:
+                courses   = CourseQueries.get_by_promotion(_filter_promo_id) or []
+                _ues_list = _UQT.get_by_promotion(_filter_promo_id) or []
+            else:
+                courses   = CourseQueries.get_by_department(dept_id) or []
+                _ues_list = _UQT.get_by_department(dept_id) or []
         except Exception as e:
             st.error(f"Erreur : {e}"); return
 
@@ -1095,33 +1464,75 @@ def render_admin_departement():
         st.divider()
 
         with st.expander("➕ Ajouter un cours (EC)"):
-            with st.form("add_course"):
-                name   = st.text_input("Intitulé *")
-                code   = st.text_input("Code (ex: INF301)")
-                _hcol, _wcol = st.columns(2)
-                hours  = _hcol.number_input("Heures", min_value=0, max_value=500, value=30)
-                weight = _wcol.number_input("Coefficient", min_value=0.5, max_value=10.0,
-                                            value=1.0, step=0.5)
-                _ue_opts_add = [None] + _ues_list
-                _ucol_add, _ccol_add = st.columns([3, 1])
-                _sel_ue_add = _ucol_add.selectbox(
-                    "Unité d'Enseignement (UE)",
-                    _ue_opts_add,
-                    format_func=lambda u: (
-                        "— Sans UE —" if u is None
-                        else f"[{u.get('group_label','?')}] {u.get('code','')} {u['name']}"
-                    ),
-                    key="ue_sel_add",
+            # Selectboxes HORS du form → réactivité immédiate
+            _ue_opts_add = [None] + _ues_list
+            _sel_ue_add = st.selectbox(
+                "Unité d'Enseignement (UE)",
+                _ue_opts_add,
+                format_func=lambda u: (
+                    "— Sans UE —" if u is None
+                    else f"[{u.get('group_label','?')}] {u.get('code','')} {u['name']}"
+                ),
+                key="ue_sel_add",
+            )
+            # Crédits restants dans l'UE → valeur par défaut pour les crédits EC
+            if _sel_ue_add:
+                _ue_total_c  = float(_sel_ue_add.get("credits") or 0)
+                _ue_used_c   = float(_sel_ue_add.get("total_ec_credits") or 0)
+                _ue_remain_c = max(0.5, _ue_total_c - _ue_used_c)
+                st.caption(
+                    f"UE : **{_ue_total_c:.0f}** crédits total · "
+                    f"**{_ue_used_c:.0f}** déjà assignés · "
+                    f"**{_ue_remain_c:.1f}** restants → pré-rempli ci-dessous"
                 )
+            else:
+                _ue_remain_c = 1.0
+
+            _prof_opts_add = [None] + _cours_profs
+            _sel_prof_add  = st.selectbox(
+                "Professeur titulaire (optionnel)",
+                _prof_opts_add,
+                format_func=lambda p: "— Aucun —" if p is None else f"{p['name']} ({p.get('title','')})",
+                key="prof_sel_add",
+            )
+            _promo_opts_add = [None] + _cours_promos
+            _sel_promo_add  = st.selectbox(
+                "Promotion (optionnel)",
+                _promo_opts_add,
+                format_func=lambda p: "— Toutes promotions —" if p is None else p["name"],
+                key="promo_sel_add",
+                index=(_promo_opts_add.index(_sel_promo_c)
+                       if _sel_promo_c and _sel_promo_c in _promo_opts_add else 0),
+            )
+
+            # Champ intitulé HORS form pour générer le code en temps réel
+            _add_name_live = st.text_input(
+                "Intitulé *", key="add_course_name_live",
+                placeholder="ex: Mathématiques Appliquées"
+            )
+            _auto_code = CourseQueries.generate_code(dept_id, _add_name_live)
+            st.caption(f"Code généré automatiquement : **{_auto_code}** (modifiable ci-dessous)")
+
+            with st.form("add_course"):
+                code  = st.text_input("Code EC", value=_auto_code)
+                _hcol_add, _ccol_add = st.columns(2)
+                hours = _hcol_add.number_input(
+                    "Heures", min_value=0, max_value=500, value=30)
                 _cred_ec_add = _ccol_add.number_input(
-                    "Crédits EC", value=1.0, min_value=0.5, step=0.5, key="cred_ec_add"
+                    "Crédits EC", value=_ue_remain_c,
+                    min_value=0.5, step=0.5, key="cred_ec_add"
                 )
                 if st.form_submit_button("Créer", type="primary"):
-                    if name.strip():
+                    if _add_name_live.strip():
                         try:
+                            _final_code = code.strip() or _auto_code
+                            _new_promo_id = _sel_promo_add["id"] if _sel_promo_add else None
+                            _new_prof_id  = _sel_prof_add["id"]  if _sel_prof_add  else None
                             new_course = CourseQueries.create(
-                                name.strip(), code.strip(),
-                                int(hours), float(weight), dept_id
+                                _add_name_live.strip(), _final_code,
+                                int(hours), 1.0, dept_id,
+                                promotion_id=_new_promo_id,
+                                professor_id=_new_prof_id,
                             )
                             if _sel_ue_add and new_course and new_course.get("id"):
                                 _UQT.assign_course(new_course["id"],
@@ -1133,20 +1544,43 @@ def render_admin_departement():
                     else:
                         st.error("Intitulé obligatoire.")
 
-        for course in courses:
-            _ue_tag = (f" — {course.get('ue_code','')} {course.get('ue_name','')}"
-                       if course.get("ue_name") else "")
+        for course in _paginate(courses, "pg_dept_courses"):
+            _ue_tag   = (f" — {course.get('ue_code','')} {course.get('ue_name','')}"
+                         if course.get("ue_name") else "")
+            _prof_tag = (f" · 👤 {course.get('professor_name','')}"
+                         if course.get("professor_name") else "")
+            _promo_tag = (f" · 🎓 {course.get('promotion_name','')}"
+                          if course.get("promotion_name") else "")
             with st.expander(
-                f"📘 {course['name']} ({course.get('code','—')}){_ue_tag}"
+                f"📘 {course['name']} ({course.get('code','—')}){_ue_tag}{_prof_tag}{_promo_tag}"
             ):
+                # Prof + promo selectbox HORS du form pour réactivité
+                _ep_prof_opts = [None] + _cours_profs
+                _ep_prof_cur  = next(
+                    (i + 1 for i, p in enumerate(_cours_profs)
+                     if p["id"] == course.get("professor_id")), 0
+                )
+                _ep_sel_prof = st.selectbox(
+                    "Professeur titulaire",
+                    _ep_prof_opts, index=_ep_prof_cur,
+                    format_func=lambda p: "— Aucun —" if p is None else f"{p['name']} ({p.get('title','')})",
+                    key=f"prof_sel_{course['id']}",
+                )
+                _ep_promo_opts = [None] + _cours_promos
+                _ep_promo_cur  = next(
+                    (i + 1 for i, p in enumerate(_cours_promos)
+                     if p["id"] == course.get("promotion_id")), 0
+                )
+                _ep_sel_promo = st.selectbox(
+                    "Promotion",
+                    _ep_promo_opts, index=_ep_promo_cur,
+                    format_func=lambda p: "— Toutes promotions —" if p is None else p["name"],
+                    key=f"promo_sel_{course['id']}",
+                )
                 with st.form(f"edit_course_{course['id']}"):
                     nn = st.text_input("Intitulé",    value=course["name"])
                     nc = st.text_input("Code",         value=course.get("code",""))
-                    _hcol, _wcol = st.columns(2)
-                    nh = _hcol.number_input("Heures",  value=course.get("hours",0), min_value=0)
-                    nw = _wcol.number_input("Coefficient",
-                                            value=float(course.get("weight",1.0)),
-                                            min_value=0.5, step=0.5)
+                    nh = st.number_input("Heures", value=course.get("hours",0), min_value=0)
                     # ── Affectation UE ──────────────────────────────────────
                     _ue_opts = [None] + _ues_list
                     _ue_cur  = next(
@@ -1174,8 +1608,11 @@ def render_admin_departement():
                     with col1:
                         if st.form_submit_button("💾 Sauvegarder"):
                             try:
-                                CourseQueries.update(course["id"], nn, nc,
-                                                     int(nh), float(nw))
+                                CourseQueries.update(
+                                    course["id"], nn, nc, int(nh), 1.0,
+                                    promotion_id=(_ep_sel_promo["id"] if _ep_sel_promo else None),
+                                    professor_id=(_ep_sel_prof["id"]  if _ep_sel_prof  else None),
+                                )
                                 if _sel_ue:
                                     _UQT.assign_course(course["id"],
                                                        _sel_ue["id"],
@@ -1203,6 +1640,15 @@ def render_admin_departement():
         )
 
         with st.expander("➕ Créer une UE"):
+            _ue_promo_opts = [None] + _cours_promos
+            _ue_promo_sel  = st.selectbox(
+                "Promotion (optionnel)",
+                _ue_promo_opts,
+                format_func=lambda p: "— Partagée / toutes promotions —" if p is None else p["name"],
+                key="ue_new_promo_sel",
+                index=(_ue_promo_opts.index(_sel_promo_c)
+                       if _sel_promo_c and _sel_promo_c in _ue_promo_opts else 0),
+            )
             with st.form("create_ue_form"):
                 _unew_c1, _unew_c2, _unew_c3 = st.columns([2, 1, 1])
                 _unew_name    = st.text_input("Intitulé * (ex: PHYSIOTHÉRAPIE 1)")
@@ -1213,9 +1659,12 @@ def render_admin_departement():
                 if st.form_submit_button("✅ Créer", type="primary"):
                     if _unew_name.strip():
                         try:
-                            _UQT.create(dept_id, _unew_name.strip(),
-                                        _unew_code.strip() or None,
-                                        float(_unew_credits), _unew_group)
+                            _UQT.create(
+                                dept_id, _unew_name.strip(),
+                                _unew_code.strip() or None,
+                                float(_unew_credits), _unew_group,
+                                promotion_id=(_ue_promo_sel["id"] if _ue_promo_sel else None),
+                            )
                             st.success(f"✅ UE '{_unew_name.strip()}' créée !")
                             st.rerun()
                         except Exception as _e:
@@ -1225,7 +1674,7 @@ def render_admin_departement():
 
         _GROUPS_CLR = {"A":"#2563EB","B":"#7C3AED","C":"#059669",
                        "D":"#D97706","E":"#DC2626","F":"#0891B2"}
-        for _ue in _ues_list:
+        for _ue in _paginate(_ues_list, "pg_dept_ues"):
             _g_clr = _GROUPS_CLR.get(_ue.get("group_label","A"), "#64748B")
             _ec_n  = int(_ue.get("ec_count") or 0)
             with st.expander(
@@ -1264,149 +1713,76 @@ def render_admin_departement():
                                 st.error(f"Erreur : {_e}")
 
     # ── PROFESSEURS ───────────────────────────────────────────────────────────
-    with tabs[3]:
+    with tabs[5]:
         try:
             professors = ProfessorQueries.get_by_department(dept_id)
         except Exception as e:
             st.error(f"Erreur : {e}"); return
 
-        st.metric("Professeurs", len(professors))
+        st.metric("Professeurs affiliés à cette faculté", len(professors))
+        st.info("💡 Les professeurs sont créés par l'admin université et affiliés par l'admin faculté.")
         st.divider()
 
-        STATUTS = ["Contractuel", "Visiteur"]
-        STATUT_ICONS = {"Contractuel": "🟢", "Visiteur": "🔵"}
+        STATUTS      = ["Contractuel", "Permanent", "Vacataire"]
+        STATUT_ICONS = {"Permanent": "🟣", "Contractuel": "🟢", "Vacataire": "🔵"}
+        AFF_ICONS    = {"permanent": "🏛️", "visiteur": "🔄"}
 
-        with st.expander("➕ Ajouter un professeur"):
-            with st.form("add_prof"):
-                name   = st.text_input("Nom complet *")
-                email  = st.text_input("Email")
-                phone  = st.text_input("Téléphone")
-                statut = st.selectbox("Statut *", options=STATUTS)
-                if st.form_submit_button("Ajouter", type="primary"):
-                    if name.strip():
-                        ProfessorQueries.create(name.strip(), email.strip(),
-                                                phone.strip(), dept_id, statut)
-                        st.success("✅ Professeur ajouté !"); st.rerun()
-                    else:
-                        st.error("Nom obligatoire.")
-
-        for prof in professors:
-            s_icon = STATUT_ICONS.get(prof.get("statut",""), "⚪")
-            with st.expander(f"👨‍🏫 {prof['name']} — {s_icon} {prof.get('statut','—')}"):
+        for prof in _paginate(professors, "pg_dept_profs"):
+            s_icon   = STATUT_ICONS.get(prof.get("statut",""), "⚪")
+            aff_icon = AFF_ICONS.get(prof.get("affiliation_status",""), "")
+            with st.expander(
+                f"👨‍🏫 {prof['name']} — {s_icon} {prof.get('statut','—')} "
+                f"{aff_icon} {prof.get('affiliation_status','—')}"
+            ):
                 with st.form(f"edit_prof_{prof['id']}"):
                     nn  = st.text_input("Nom",       value=prof["name"])
                     ne  = st.text_input("Email",     value=prof.get("email",""))
                     nph = st.text_input("Téléphone", value=prof.get("phone",""))
-                    ns  = st.selectbox("Statut", options=STATUTS,
+                    ns  = st.selectbox("Statut contrat", options=STATUTS,
                                        index=STATUTS.index(prof["statut"])
                                        if prof.get("statut") in STATUTS else 0)
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.form_submit_button("💾 Sauvegarder"):
-                            try:
-                                ProfessorQueries.update(prof["id"], nn, ne, nph, ns)
-                                st.success("✅ Professeur mis à jour !"); st.rerun()
-                            except Exception as e:
-                                st.error(f"Erreur : {e}")
-                    with col2:
-                        if st.form_submit_button("🗑️ Supprimer"):
-                            try:
-                                ProfessorQueries.delete(prof["id"])
-                                st.success("✅ Professeur supprimé."); st.rerun()
-                            except Exception as e:
-                                st.error(f"Erreur : {e}")
+                    if st.form_submit_button("💾 Sauvegarder"):
+                        try:
+                            ProfessorQueries.update(prof["id"], nn, ne, nph, ns)
+                            st.success("✅ Professeur mis à jour !"); st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur : {e}")
 
-    # ── COMPTES PROFESSEURS ───────────────────────────────────────────────────
-    with tabs[4]:
-        from db.queries import ProfessorExtQueries
-        from utils.auth import hash_password as _hp
+    # ── COMPTES PROFESSEURS (lecture seule) ──────────────────────────────────
+    with tabs[6]:
+        from db.queries import ProfessorExtQueries as _PEQ_acc
 
         try:
-            profs_with_account = ProfessorExtQueries.get_with_account(dept_id)
+            profs_with_account = _PEQ_acc.get_with_account(dept_id)
         except Exception as e:
             st.error(f"Erreur : {e}"); profs_with_account = []
 
-        fac_id_dept  = dept.get("faculty_id") if dept else None
-        uni_id_dept  = dept.get("university_id") if dept else user.get("university_id")
-
-        st.metric("Professeurs avec compte", sum(1 for p in profs_with_account if p.get("user_id")))
+        nb_avec = sum(1 for p in profs_with_account if p.get("user_id"))
+        nb_sans = len(profs_with_account) - nb_avec
+        _ta1, _ta2 = st.columns(2)
+        _ta1.metric("Avec compte",    nb_avec)
+        _ta2.metric("Sans compte",    nb_sans)
+        st.info(
+            "💡 La création et la gestion des comptes professeurs se font dans "
+            "**l'espace Admin Université → Professeurs**."
+        )
         st.divider()
 
         if not profs_with_account:
-            st.info("Aucun professeur dans ce département.")
+            st.info("Aucun professeur affilié à la faculté de ce département.")
         else:
-            for prof in profs_with_account:
-                has_account = bool(prof.get("user_id"))
-                icon = "🟢" if has_account else "⚫"
-                with st.expander(f"{icon} {prof['name']} — {'Compte actif' if has_account else 'Pas de compte'}"):
-                    if has_account:
-                        st.caption(f"Email de connexion : {prof.get('account_email','—')}")
-                        if not prof.get("account_active"):
-                            st.warning("Compte désactivé")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            with st.form(f"reset_prof_pwd_{prof['id']}"):
-                                new_p  = st.text_input("Nouveau mot de passe *", type="password")
-                                new_p2 = st.text_input("Confirmer *", type="password")
-                                if st.form_submit_button("🔑 Réinitialiser"):
-                                    if not new_p or len(new_p) < 8:
-                                        st.error("Min 8 caractères.")
-                                    elif new_p != new_p2:
-                                        st.error("Mots de passe différents.")
-                                    else:
-                                        try:
-                                            from db.queries import UserQueries as _UQ
-                                            _UQ.update_password(prof["user_id"], _hp(new_p))
-                                            st.success("✅ Mot de passe mis à jour !")
-                                        except Exception as e:
-                                            st.error(str(e))
-                        with col2:
-                            if st.button("⛔ Désactiver le compte",
-                                         key=f"deact_prof_{prof['id']}"):
-                                try:
-                                    from db.queries import UserQueries as _UQ
-                                    _UQ.deactivate(prof["user_id"])
-                                    st.warning("Compte désactivé."); st.rerun()
-                                except Exception as e:
-                                    st.error(str(e))
-                    else:
-                        st.caption("Ce professeur n'a pas encore de compte de connexion.")
-                        with st.form(f"create_prof_account_{prof['id']}"):
-                            pa_email = st.text_input("Email de connexion *",
-                                                      value=prof.get("email",""))
-                            pa_pwd   = st.text_input("Mot de passe * (min 8 car.)",
-                                                      type="password")
-                            pa_pwd2  = st.text_input("Confirmer *", type="password")
-                            if st.form_submit_button("Créer le compte", type="primary"):
-                                if not pa_email or "@" not in pa_email:
-                                    st.error("Email invalide.")
-                                elif not pa_pwd or len(pa_pwd) < 8:
-                                    st.error("Min 8 caractères.")
-                                elif pa_pwd != pa_pwd2:
-                                    st.error("Mots de passe différents.")
-                                else:
-                                    try:
-                                        from db.queries import UserQueries as _UQ
-                                        existing = _UQ.get_by_email(pa_email.strip())
-                                        if existing:
-                                            st.error("Cet email est déjà utilisé.")
-                                        else:
-                                            _UQ.create_professor_account(
-                                                name=prof["name"],
-                                                email=pa_email.strip().lower(),
-                                                password_hash=_hp(pa_pwd),
-                                                university_id=uni_id_dept,
-                                                faculty_id=fac_id_dept,
-                                                department_id=dept_id,
-                                                professor_id=prof["id"],
-                                            )
-                                            st.success(f"✅ Compte créé pour {prof['name']} !")
-                                            st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Erreur : {e}")
+            for _pa in _paginate(profs_with_account, "pg_dept_acc"):
+                _has = bool(_pa.get("user_id"))
+                _ico = "🟢" if _has and _pa.get("account_active") else (
+                       "⛔" if _has else "⚫")
+                _lbl = (f"✉️ {_pa.get('account_email','—')}"
+                        if _has else "Aucun compte")
+                if _has and not _pa.get("account_active"):
+                    _lbl += " · ⚠️ Désactivé"
+                st.markdown(f"{_ico} **{_pa['name']}** — {_lbl}")
 
     # ── EMPLOI DU TEMPS ───────────────────────────────────────────────────────
-    with tabs[5]:
+    with tabs[7]:
         import io as _io_sch
         import pandas as _pd_sch
         from datetime import timedelta as _td_sch, time as _time_sch, datetime as _dt_sch
@@ -1447,18 +1823,20 @@ def render_admin_departement():
                     st.error(f"Erreur : {e}"); return
 
                 if not classes:
-                    st.info("Aucune salle dans cette promotion.")
+                    st.info("Aucun groupe dans cette promotion. Créez-en dans l'onglet **Groupes & Salles**.")
                 else:
-                    cls_sel = st.selectbox("Salle", options=classes,
+                    cls_sel = st.selectbox("Groupe / Classe", options=classes,
                                            format_func=lambda c: c["name"],
                                            key="sched_class")
                     if cls_sel:
                         try:
+                            from db.queries import RoomQueries as _RQS
                             schedules  = ScheduleQueries.get_by_class(cls_sel["id"])
                             courses    = CourseQueries.get_by_department(dept_id)
                             uni_id_sch = (dept.get("university_id")
                                           or user.get("university_id"))
                             professors = ProfessorQueries.get_by_university(uni_id_sch)
+                            _rooms_sch = _RQS.get_by_department(dept_id) or []
                         except Exception as e:
                             st.error(f"Erreur : {e}"); return
 
@@ -1781,6 +2159,25 @@ def render_admin_departement():
                             elif _add_type != "ferie" and not professors:
                                 st.info("Ajoutez d'abord des professeurs.")
                             else:
+                                # ── Cours HORS form → prof auto-rempli ───────────
+                                _add_course = None
+                                _auto_prof_idx = 0
+                                if _add_type != "ferie":
+                                    _add_course = st.selectbox(
+                                        "Cours *", options=courses,
+                                        format_func=lambda c: (
+                                            f"{c['name']}"
+                                            + (f"  · 👤 {c['professor_name']}"
+                                               if c.get("professor_name") else "")
+                                        ),
+                                        key="add_sched_course_sel",
+                                    )
+                                    if _add_course and _add_course.get("professor_id"):
+                                        _auto_prof_idx = next(
+                                            (i for i, p in enumerate(professors)
+                                             if p["id"] == _add_course["professor_id"]), 0
+                                        )
+
                                 with st.form("add_schedule"):
                                     col1, col2 = st.columns(2)
                                     with col1:
@@ -1797,20 +2194,29 @@ def render_admin_departement():
                                             week_type = "Toutes"
                                     with col2:
                                         _add_label = None
-                                        _add_course = None
-                                        _add_prof   = None
+                                        _add_prof  = None
                                         if _add_type == "ferie":
                                             _add_label = st.text_input(
                                                 "Motif *",
                                                 placeholder="ex: Fête nationale")
                                         else:
-                                            _add_course = st.selectbox(
-                                                "Cours *", options=courses,
-                                                format_func=lambda c: c["name"])
                                             _add_prof = st.selectbox(
                                                 "Professeur *", options=professors,
+                                                index=_auto_prof_idx,
                                                 format_func=lambda p: f"{p['name']} · {p.get('statut','—')} ({p.get('department_name','—')})")
-                                        room = st.text_input("Salle")
+                                        # ── Salle physique ──────────────────────────
+                                        _room_opts = [None] + _rooms_sch
+                                        _sel_room_add = st.selectbox(
+                                            "Salle physique",
+                                            _room_opts,
+                                            format_func=lambda r: (
+                                                "— Sans salle —" if r is None
+                                                else f"{r['name']}"
+                                                     f"{' · ' + r['code'] if r.get('code') else ''}"
+                                                     f" · {r.get('capacity',0)} places"
+                                            ),
+                                            key="add_room_sel",
+                                        )
                                     # ── Date(s) selon le type ────────────────────
                                     if _add_type in ("examen", "ferie"):
                                         sched_valid_from = st.date_input(
@@ -1843,20 +2249,31 @@ def render_admin_departement():
                                             _es = end_time.strftime("%H:%M")
                                             _ok_days, _conf_days = [], []
                                             try:
+                                                _add_room_id = _sel_room_add["id"] if _sel_room_add else None
+                                                _room_txt    = _sel_room_add["name"] if _sel_room_add else None
                                                 for _day in days:
+                                                    # ── Conflit groupe (bloquant) ────
                                                     if (_add_type == "cours"
                                                             and ScheduleQueries.check_conflict(
                                                                 cls_sel["id"], _day, _ss, _es)):
-                                                        _conf_days.append(_day)
+                                                        _conf_days.append(f"{_day} (conflit groupe)")
                                                         continue
-                                                    # Check professor and room conflicts (warnings only)
+                                                    # ── Conflit salle (bloquant) ─────
+                                                    if _add_room_id:
+                                                        _room_conf = _RQS.check_availability(
+                                                            _add_room_id, _day, _ss, _es)
+                                                        if _room_conf:
+                                                            _occupied = ", ".join(
+                                                                r["class_name"] for r in _room_conf)
+                                                            _conf_days.append(
+                                                                f"{_day} (salle **{_room_txt}** occupée par {_occupied})")
+                                                            continue
+                                                    # ── Conflit prof (avertissement) ─
                                                     _prof_conf = (ScheduleQueries.check_professor_conflict(
                                                         _add_prof["id"], _day, _ss, _es) if _add_prof else [])
-                                                    _room_conf = (ScheduleQueries.check_room_conflict(
-                                                        room.strip(), _day, _ss, _es) if room.strip() else [])
                                                     ScheduleQueries.create(
                                                         cls_sel["id"], _day, _ss, _es,
-                                                        room.strip(),
+                                                        _room_txt,
                                                         _add_course["id"] if _add_course else None,
                                                         _add_prof["id"]   if _add_prof   else None,
                                                         week_type,
@@ -1864,22 +2281,18 @@ def render_admin_departement():
                                                         valid_until=sched_valid_until or None,
                                                         slot_type=_add_type,
                                                         slot_label=(_add_label or "").strip() or None,
+                                                        room_id=_add_room_id,
                                                     )
                                                     _ok_days.append(_day)
-                                                    _warns = []
                                                     if _prof_conf:
-                                                        _warns.append(f"Prof déjà occupé(e) dans : {', '.join(r['class_name'] for r in _prof_conf)}")
-                                                    if _room_conf:
-                                                        _warns.append(f"Salle déjà utilisée par : {', '.join(r['class_name'] for r in _room_conf)}")
-                                                    for _w in _warns:
-                                                        st.warning(f"⚠️ {_day} — {_w}")
+                                                        st.warning(f"⚠️ {_day} — Prof déjà occupé(e) dans : {', '.join(r['class_name'] for r in _prof_conf)}")
                                                 if _ok_days:
                                                     _msg = f"✅ {len(_ok_days)} créneau(x) ajouté(s) : {', '.join(_ok_days)}"
                                                     if _conf_days:
-                                                        _msg += f"  ⚠️ Conflit ignoré : {', '.join(_conf_days)}"
+                                                        _msg += f"\n⛔ Rejetés : {' · '.join(_conf_days)}"
                                                     st.success(_msg); st.rerun()
                                                 else:
-                                                    st.error("⚠️ Conflit d'horaire sur tous les jours sélectionnés.")
+                                                    st.error("⛔ Aucun créneau créé — conflits sur tous les jours sélectionnés.")
                                             except Exception as e:
                                                 st.error(f"Erreur : {e}")
 
@@ -1909,12 +2322,17 @@ def render_admin_departement():
                                 _wt_b   = f" · **{_wt}**" if _wt != "Toutes" else ""
                                 _tc     = _TYPE_COLORS.get(_stype,"#2563EB")
                                 _ti     = _TYPE_ICONS.get(_stype,"📚")
+                                _room_disp = (
+                                    f" | 🏫 {s['room_name']}" if s.get("room_name")
+                                    else (f" | 🏫 {s['room']}" if s.get("room") else "")
+                                )
                                 _label  = (
                                     f"<span style='color:{_tc};font-weight:700'>{_ti}</span> "
                                     f"{s['day']} {_fmt_t(s['start_time'])}–"
                                     f"{_fmt_t(s['end_time'])} | "
                                     f"<b>{s['course_name']}</b>"
                                     + (f" | {s['professor_name']}" if s.get("professor_name") else "")
+                                    + _room_disp
                                     + f"{_wt_b}{_period}"
                                 )
                                 _cl1, _cl2, _cl3 = st.columns([5, 1, 1])
@@ -2013,10 +2431,22 @@ def render_admin_departement():
                                                         format_func=lambda p: f"{p['name']} · {p.get('statut','—')}",
                                                         index=_pi,
                                                         key=f"ed_p_{s['id']}")
-                                                _e_room = st.text_input(
-                                                    "Salle",
-                                                    value=s.get("room") or "",
-                                                    key=f"ed_rm_{s['id']}")
+                                                _er_opts = [None] + _rooms_sch
+                                                _er_cur  = next(
+                                                    (i + 1 for i, r in enumerate(_rooms_sch)
+                                                     if r["id"] == s.get("room_id")), 0
+                                                )
+                                                _e_room_obj = st.selectbox(
+                                                    "Salle physique",
+                                                    _er_opts, index=_er_cur,
+                                                    format_func=lambda r: (
+                                                        "— Sans salle —" if r is None
+                                                        else f"{r['name']}"
+                                                             f"{' · ' + r['code'] if r.get('code') else ''}"
+                                                             f" · {r.get('capacity',0)} places"
+                                                    ),
+                                                    key=f"ed_rm_{s['id']}"
+                                                )
                                             # ── Date selon le type ───────────────
                                             if _e_stype in ("examen", "ferie"):
                                                 _e_vf = st.date_input(
@@ -2051,12 +2481,14 @@ def render_admin_departement():
                                                         st.error("Le motif est obligatoire.")
                                                     else:
                                                         try:
+                                                            _e_room_id  = _e_room_obj["id"] if _e_room_obj else None
+                                                            _e_room_txt = _e_room_obj["name"] if _e_room_obj else None
                                                             ScheduleQueries.update(
                                                                 s["id"],
                                                                 _e_day,
                                                                 _e_start.strftime("%H:%M"),
                                                                 _e_end.strftime("%H:%M"),
-                                                                _e_room.strip(),
+                                                                _e_room_txt,
                                                                 _e_course["id"] if _e_course else None,
                                                                 _e_prof["id"]   if _e_prof   else None,
                                                                 _e_wt,
@@ -2064,6 +2496,7 @@ def render_admin_departement():
                                                                 valid_until=_e_vu if _e_vu else None,
                                                                 slot_type=_e_stype,
                                                                 slot_label=(_e_label or "").strip() or None,
+                                                                room_id=_e_room_id,
                                                             )
                                                             st.session_state[_ek] = False
                                                             st.success("✅ Créneau mis à jour !")
@@ -2199,7 +2632,7 @@ def render_admin_departement():
                                 st.caption(f"Analytiques indisponibles : {_ae}")
 
     # ── COMMUNIQUÉS ───────────────────────────────────────────────────────────
-    with tabs[6]:
+    with tabs[13]:
         try:
             announcements = AnnouncementQueries.get_by_department(dept_id)
         except Exception as e:
@@ -2256,7 +2689,7 @@ def render_admin_departement():
                     else:
                         st.error("Titre et contenu obligatoires.")
 
-        for ann in announcements:
+        for ann in _paginate(announcements, "pg_dept_ann"):
             with st.expander(f"{'📌 ' if ann.get('is_pinned') else ''}📢 {ann['title']}"):
                 announcement_card(ann)
                 if st.button("🗑️ Supprimer", key=f"del_ann_{ann['id']}"):
@@ -2264,7 +2697,7 @@ def render_admin_departement():
                     st.success("✅ Communiqué supprimé."); st.rerun()
 
     # ── REGISTRE ÉTUDIANTS (Liste d'inscription) ─────────────────────────────
-    with tabs[7]:
+    with tabs[8]:
         import io
         import pandas as pd
         from db.queries import (StudentRegistryQueries, ClassQueries as _CQ,
@@ -2275,16 +2708,15 @@ def render_admin_departement():
         uni_id_for_reg = user.get("university_id")
 
         try:
-            registry = StudentRegistryQueries.get_by_university(uni_id_for_reg)
+            _reg_stats = StudentRegistryQueries.get_stats(uni_id_for_reg) or {}
         except Exception as e:
-            st.error(f"Erreur : {e}"); registry = []
-
-        registered_count = sum(1 for r in registry if r.get("is_registered"))
-        c1r, c2r, c3r, c4r = st.columns(4)
-        c1r.metric("Total registre",  len(registry))
-        c2r.metric("Comptes créés",   registered_count)
-        c3r.metric("En attente",      len(registry) - registered_count)
+            st.error(f"Erreur : {e}"); _reg_stats = {}
         _annees_reg = StudentRegistryQueries.get_annees_academiques(uni_id_for_reg)
+
+        c1r, c2r, c3r, c4r = st.columns(4)
+        c1r.metric("Total registre",     _reg_stats.get("total", 0))
+        c2r.metric("Comptes créés",      _reg_stats.get("registered", 0))
+        c3r.metric("En attente",         _reg_stats.get("pending", 0))
         c4r.metric("Années académiques", len(_annees_reg))
         st.divider()
 
@@ -2370,7 +2802,12 @@ def render_admin_departement():
 
         # ── Filtres d'affichage et d'export ──────────────────────────────────
         st.markdown("#### Filtrer / Exporter la liste")
-        _f1, _f2, _f3, _f4 = st.columns(4)
+        _fs, _f1, _f2, _f3, _f4 = st.columns([2, 1, 1, 1, 1])
+        with _fs:
+            _fil_search = st.text_input(
+                "Rechercher", placeholder="Numéro étudiant ou nom...",
+                key="reg_search"
+            )
         with _f1:
             _fil_annee = st.selectbox(
                 "Année académique", ["Toutes"] + _annees_reg,
@@ -2407,25 +2844,44 @@ def render_admin_departement():
                 format_func=lambda p: "Toutes" if p is None else p["name"],
                 key="reg_fil_promo"
             )
+        _fil_compte_opt = st.radio(
+            "Compte étudiant", ["Tous", "Sans compte", "Avec compte"],
+            horizontal=True, key="reg_fil_compte"
+        )
+        _compte_filter = {"Sans compte": "sans", "Avec compte": "avec"}.get(_fil_compte_opt)
 
-        # Appliquer les filtres
-        _reg_filtered = list(registry)
-        if _fil_annee != "Toutes":
-            _reg_filtered = [r for r in _reg_filtered
-                             if r.get("annee_academique") == _fil_annee]
-        if _fil_filiere:
-            _reg_filtered = [r for r in _reg_filtered
-                             if r.get("filiere_id") == _fil_filiere["id"]]
-        if _fil_option:
-            _reg_filtered = [r for r in _reg_filtered
-                             if r.get("option_id") == _fil_option["id"]]
-        if _fil_promo:
-            _reg_filtered = [r for r in _reg_filtered
-                             if r.get("promotion_id") == _fil_promo["id"]]
+        # ── Paramètres de filtres pour les requêtes serveur ──────────────────
+        _PER_PAGE = 50
+        _annee_param = _fil_annee if _fil_annee != "Toutes" else None
+        _filter_kwargs = dict(
+            annee=_annee_param,
+            filiere_id=_fil_filiere["id"] if _fil_filiere else None,
+            option_id=_fil_option["id"] if _fil_option else None,
+            promotion_id=_fil_promo["id"] if _fil_promo else None,
+            search=_fil_search.strip() or None,
+            compte_filter=_compte_filter,
+        )
 
-        st.caption(f"**{len(_reg_filtered)}** étudiant(s) correspondant(s)")
+        # Reset page 1 dès que les filtres changent
+        _fk = (f"{_annee_param}|{_fil_filiere and _fil_filiere['id']}|"
+               f"{_fil_option and _fil_option['id']}|{_fil_promo and _fil_promo['id']}|"
+               f"{_fil_search.strip()}|{_compte_filter}")
+        if st.session_state.get("_reg_filter_key") != _fk:
+            st.session_state["_reg_filter_key"] = _fk
+            st.session_state["reg_page"] = 1
 
-        # ── Export template + liste filtrée ───────────────────────────────────
+        _current_page = int(st.session_state.get("reg_page", 1))
+
+        # ── Comptage total (léger) ────────────────────────────────────────────
+        try:
+            _total_count = StudentRegistryQueries.count_filtered(
+                uni_id_for_reg, **_filter_kwargs)
+        except Exception as _ce:
+            st.error(f"Erreur comptage : {_ce}"); _total_count = 0
+        _total_pages = max(1, (_total_count + _PER_PAGE - 1) // _PER_PAGE)
+        _current_page = min(_current_page, _total_pages)
+
+        # ── Export template + liste filtrée complète ──────────────────────────
         col_tmpl, col_exp = st.columns(2)
         with col_tmpl:
             df_tmpl = pd.DataFrame(columns=[
@@ -2443,41 +2899,75 @@ def render_admin_departement():
                 use_container_width=True,
             )
         with col_exp:
-            if _reg_filtered:
-                _exp_rows = [{
-                    "numéro étudiant":   r["student_number"],
-                    "nom":               r.get("nom") or r.get("full_name",""),
-                    "postnom":           r.get("postnom") or "",
-                    "prénom":            r.get("prenom") or "",
-                    "département":       r.get("department_name") or r.get("promotion_txt") or "",
-                    "filière":           r.get("filiere_name") or "",
-                    "option":            r.get("option_name") or r.get("option_txt") or "",
-                    "promotion":         r.get("promotion_name") or r.get("promotion_txt") or "",
-                    "année académique":  r.get("annee_academique") or "",
-                    "école de provenance": r.get("ecole_provenance") or "",
-                    "compte créé":       "Oui" if r.get("is_registered") else "Non",
-                } for r in _reg_filtered]
-                _buf_exp = io.BytesIO()
-                pd.DataFrame(_exp_rows).to_excel(
-                    _buf_exp, index=False, engine="openpyxl")
-                _fn_exp = (
-                    f"inscription_"
-                    f"{(_fil_filiere['name'] if _fil_filiere else 'tout')}".replace(" ","_")
-                    + f"_{_fil_annee if _fil_annee != 'Toutes' else 'toutes_annees'}.xlsx"
-                )
-                st.download_button(
-                    "📤 Exporter la liste filtrée (.xlsx)",
-                    data=_buf_exp.getvalue(),
-                    file_name=_fn_exp,
-                    mime=("application/vnd.openxmlformats-officedocument"
-                          ".spreadsheetml.sheet"),
-                    use_container_width=True,
-                )
+            if _total_count > 0:
+                try:
+                    _exp_data = StudentRegistryQueries.get_all_filtered(
+                        uni_id_for_reg, **_filter_kwargs) or []
+                except Exception:
+                    _exp_data = []
+                if _exp_data:
+                    _exp_rows = [{
+                        "numéro étudiant":  r["student_number"],
+                        "nom":              r.get("nom") or r.get("full_name",""),
+                        "postnom":          r.get("postnom") or "",
+                        "prénom":           r.get("prenom") or "",
+                        "département":      r.get("department_name") or "",
+                        "filière":          r.get("filiere_name") or "",
+                        "option":           r.get("option_name") or r.get("option_txt") or "",
+                        "promotion":        r.get("promotion_name") or r.get("promotion_txt") or "",
+                        "année académique": r.get("annee_academique") or "",
+                        "provenance":       r.get("provenance") or "",
+                        "compte créé":      "Oui" if r.get("is_registered") else "Non",
+                    } for r in _exp_data]
+                    _buf_exp = io.BytesIO()
+                    pd.DataFrame(_exp_rows).to_excel(
+                        _buf_exp, index=False, engine="openpyxl")
+                    _fn_exp = (
+                        f"inscription_"
+                        f"{(_fil_filiere['name'] if _fil_filiere else 'tout')}".replace(" ","_")
+                        + f"_{_annee_param or 'toutes_annees'}.xlsx"
+                    )
+                    st.download_button(
+                        "📤 Exporter la liste filtrée (.xlsx)",
+                        data=_buf_exp.getvalue(),
+                        file_name=_fn_exp,
+                        mime=("application/vnd.openxmlformats-officedocument"
+                              ".spreadsheetml.sheet"),
+                        use_container_width=True,
+                    )
+                else:
+                    st.button("📤 Exporter", disabled=True, use_container_width=True)
             else:
-                st.button("📤 Exporter", disabled=True,
-                          use_container_width=True)
+                st.button("📤 Exporter", disabled=True, use_container_width=True)
 
         st.divider()
+
+        # ── Données de la page courante (50 par page) ─────────────────────────
+        try:
+            _reg_filtered = StudentRegistryQueries.get_paginated(
+                uni_id_for_reg, page=_current_page,
+                per_page=_PER_PAGE, **_filter_kwargs) or []
+        except Exception as _pe:
+            st.error(f"Erreur chargement : {_pe}"); _reg_filtered = []
+
+        # ── Contrôles de pagination ───────────────────────────────────────────
+        _pc1, _pc2, _pc3 = st.columns([1, 2, 1])
+        with _pc1:
+            if st.button("← Précédent", disabled=(_current_page <= 1),
+                         key="reg_prev", use_container_width=True):
+                st.session_state["reg_page"] = _current_page - 1; st.rerun()
+        with _pc2:
+            st.markdown(
+                f"<div style='text-align:center;padding:0.35rem 0;color:#475569'>"
+                f"<b>{_total_count}</b> étudiant(s) · "
+                f"Page <b>{_current_page}</b> / <b>{_total_pages}</b>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        with _pc3:
+            if st.button("Suivant →", disabled=(_current_page >= _total_pages),
+                         key="reg_next", use_container_width=True):
+                st.session_state["reg_page"] = _current_page + 1; st.rerun()
 
         # ── Import Excel (avec contexte filière/option/promotion) ─────────────
         with st.expander("📂 Importer depuis Excel"):
@@ -2485,28 +2975,17 @@ def render_admin_departement():
                 "Sélectionnez d'abord le contexte (filière, option, promotion, année). "
                 "Le fichier Excel n'a besoin que des colonnes : "
                 "**numéro étudiant · nom · postnom · prénom** "
-                "(+ école de provenance, date de naissance, sexe en option)."
+                "(+ provenance, date de naissance, sexe en option)."
             )
 
             _ic1, _ic2 = st.columns(2)
             with _ic1:
-                _imp_fac_list = []
-                try:
-                    _imp_fac_list = _FacQ.get_by_university(uni_id_for_reg) or []
-                except Exception:
-                    pass
-                _imp_fac = st.selectbox(
-                    "Faculté *", [None] + _imp_fac_list,
-                    format_func=lambda f: "— Sélectionner —" if f is None else f["name"],
-                    key="imp_fac"
-                )
+                st.text_input("Faculté", value=dept.get("faculty_name","—") if dept else "—",
+                              disabled=True, key="imp_fac_disp")
             with _ic2:
-                _imp_dept_list = _DQ2.get_by_faculty(_imp_fac["id"]) if _imp_fac else []
-                _imp_dept = st.selectbox(
-                    "Département *", [None] + _imp_dept_list,
-                    format_func=lambda d: "— Sélectionner —" if d is None else d["name"],
-                    key="imp_dept"
-                )
+                _imp_dept = {"id": dept_id, "name": dept["name"]} if dept else None
+                st.text_input("Département", value=dept["name"] if dept else "—",
+                              disabled=True, key="imp_dept_disp")
 
             _ic3, _ic4 = st.columns(2)
             with _ic3:
@@ -2595,7 +3074,7 @@ def render_admin_departement():
                                     n_v  = str(row.get("nom","")).strip()
                                     pn_v = str(row.get("postnom","")).strip()
                                     pr_v = str(row.get("prenom","")).strip()
-                                    ec_v = str(row.get("ecole_de_provenance","")).strip()
+                                    ec_v = str(row.get("provenance","")).strip()
                                     dn_v = str(row.get("date_de_naissance_aaaa_mm_jj","")).strip() or None
                                     sx_v = str(row.get("sexe_m_f","")).strip().upper() or None
                                     full = " ".join(filter(None,[pr_v,n_v,pn_v])) or n_v
@@ -2614,7 +3093,7 @@ def render_admin_departement():
                                         option_id=_imp_opt["id"] if _imp_opt else None,
                                         promotion_id=_imp_pr["id"] if _imp_pr else None,
                                         annee_academique=_imp_annee.strip(),
-                                        ecole_provenance=ec_v or None,
+                                        provenance=ec_v or None,
                                         date_naissance=dn_v,
                                         sexe=sx_v,
                                     )
@@ -2638,23 +3117,12 @@ def render_admin_departement():
         with st.expander("➕ Ajouter un étudiant manuellement"):
             _m1, _m2 = st.columns(2)
             with _m1:
-                _man_fac_list = []
-                try:
-                    _man_fac_list = _FacQ.get_by_university(uni_id_for_reg) or []
-                except Exception:
-                    pass
-                _man_fac = st.selectbox(
-                    "Faculté", [None] + _man_fac_list,
-                    format_func=lambda f: "— Sélectionner —" if f is None else f["name"],
-                    key="man_fac"
-                )
+                st.text_input("Faculté", value=dept.get("faculty_name","—") if dept else "—",
+                              disabled=True, key="man_fac_disp")
             with _m2:
-                _man_dept_list = _DQ2.get_by_faculty(_man_fac["id"]) if _man_fac else []
-                _man_dept = st.selectbox(
-                    "Département", [None] + _man_dept_list,
-                    format_func=lambda d: "— Sélectionner —" if d is None else d["name"],
-                    key="man_dept"
-                )
+                _man_dept = {"id": dept_id, "name": dept["name"]} if dept else None
+                st.text_input("Département", value=dept["name"] if dept else "—",
+                              disabled=True, key="man_dept_disp")
 
             _m3, _m4 = st.columns(2)
             with _m3:
@@ -2708,7 +3176,7 @@ def render_admin_departement():
 
                 col_ec, col_sx = st.columns(2)
                 with col_ec:
-                    reg_ecole = st.text_input("École de provenance",
+                    reg_ecole = st.text_input("Provenance",
                                               placeholder="ex: Lycée Saint-Joseph")
                 with col_sx:
                     reg_sexe = st.selectbox("Sexe", ["", "M", "F", "Autre"])
@@ -2739,7 +3207,7 @@ def render_admin_departement():
                                 option_id=_man_opt["id"] if _man_opt else None,
                                 promotion_id=_man_pr["id"] if _man_pr else None,
                                 annee_academique=_reg_annee.strip(),
-                                ecole_provenance=reg_ecole.strip() or None,
+                                provenance=reg_ecole.strip() or None,
                                 sexe=reg_sexe or None,
                             )
                             st.success(f"✅ {reg_num.upper()} ajouté au registre !")
@@ -2797,11 +3265,11 @@ def render_admin_departement():
                     cb.markdown(f"**Filière / Option**  \n{_fi_lbl} / {_opt_lbl}")
                     cc.markdown(f"**Promotion**  \n{_pr_lbl}")
                     cd.markdown(f"**Année acad.**  \n{_yr_lbl}")
-                    _ecole = reg.get("ecole_provenance")
+                    _ecole = reg.get("provenance")
                     _sexe  = reg.get("sexe")
                     if _ecole or _sexe:
                         _parts = []
-                        if _ecole: _parts.append(f"École : {_ecole}")
+                        if _ecole: _parts.append(f"Provenance : {_ecole}")
                         if _sexe:  _parts.append(f"Sexe : {_sexe}")
                         st.caption("  ·  ".join(_parts))
 
@@ -2888,26 +3356,33 @@ def render_admin_departement():
                                 else:
                                     try:
                                         _fn = " ".join(filter(None, [
-                                            reg.get("prenom",""), reg.get("nom",""),
-                                            reg.get("postnom","")
-                                        ])) or reg.get("full_name","")
-                                        _SQReg.create(
-                                            student_number=reg["student_number"],
-                                            full_name=_fn,
-                                            email=_new_email.strip() or None,
-                                            password_hash=_hp_reg(_new_pwd),
-                                            class_id=reg.get("class_id"),
-                                            university_id=reg["university_id"],
-                                            registry_id=reg["id"],
-                                            nom=reg.get("nom"),
-                                            postnom=reg.get("postnom"),
-                                            prenom=reg.get("prenom"),
-                                            username=_new_uname.strip(),
-                                        )
-                                        st.success(f"✅ Compte créé !"); st.rerun()
+                                            reg.get("prenom") or "",
+                                            reg.get("nom") or "",
+                                            reg.get("postnom") or ""
+                                        ])) or (reg.get("full_name") or "") or reg["student_number"]
+                                        if not _new_uname.strip():
+                                            st.error("Nom d'utilisateur obligatoire.")
+                                        else:
+                                            _SQReg.create(
+                                                student_number=reg["student_number"],
+                                                full_name=_fn,
+                                                email=_new_email.strip() or None,
+                                                password_hash=_hp_reg(_new_pwd),
+                                                class_id=reg.get("class_id"),
+                                                university_id=reg["university_id"],
+                                                registry_id=reg["id"],
+                                                nom=reg.get("nom") or None,
+                                                postnom=reg.get("postnom") or None,
+                                                prenom=reg.get("prenom") or None,
+                                                username=_new_uname.strip(),
+                                            )
+                                            StudentRegistryQueries.mark_registered(reg["id"])
+                                            st.success(f"✅ Compte créé pour {_fn} !"); st.rerun()
                                     except Exception as _ce:
                                         if "unique" in str(_ce).lower():
-                                            st.error("Ce numéro / nom d'utilisateur existe déjà.")
+                                            st.error("Ce numéro étudiant ou nom d'utilisateur existe déjà.")
+                                        elif "does not exist" in str(_ce).lower() or "n'existe pas" in str(_ce).lower():
+                                            st.error(f"Erreur base de données — migration manquante ? Détail : {_ce}")
                                         else:
                                             st.error(f"Erreur : {_ce}")
 
@@ -2918,80 +3393,8 @@ def render_admin_departement():
                         StudentRegistryQueries.delete(reg["id"])
                         st.success("Retiré du registre."); st.rerun()
 
-    # ── COMPTES ÉTUDIANTS (gestion uniquement) ────────────────────────────────
-    with tabs[8]:
-        from db.queries import StudentQueries as _SQ
-        from utils.auth import hash_password as _hp_stu
-
-        try:
-            all_students = _SQ.get_by_department(dept_id)
-        except Exception as e:
-            st.error(str(e)); all_students = []
-
-        actifs_stu   = [s for s in all_students if s.get("is_active")]
-        inactifs_stu = [s for s in all_students if not s.get("is_active")]
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total comptes",  len(all_students))
-        c2.metric("Actifs",         len(actifs_stu))
-        c3.metric("Désactivés",     len(inactifs_stu))
-        st.info(
-            "Les comptes étudiants se créent depuis **Registre Étudiants** "
-            "(onglet précédent) — sélectionnez un inscrit sans compte et cliquez "
-            "« 🔑 Créer le compte »."
-        )
-        st.divider()
-
-        search_stu = st.text_input("🔍 Rechercher", placeholder="Nom ou numéro...",
-                                   key="search_stu_dept")
-
-        for stu in all_students:
-            if search_stu and search_stu.lower() not in stu["full_name"].lower() \
-                          and search_stu.lower() not in stu["student_number"].lower():
-                continue
-
-            is_active = stu.get("is_active", True)
-            icon = "✅" if is_active else "⛔"
-            with st.expander(
-                f"{icon} {stu['full_name']} — N° {stu['student_number']} "
-                f"· {stu.get('promotion_name','—')} / {stu.get('class_name','—')}"
-            ):
-                st.caption(
-                    f"👤 @{stu.get('username','—')} · "
-                    f"📧 {stu.get('email','—')}"
-                )
-                _sb1, _sb2, _sb3 = st.columns(3)
-                with _sb1:
-                    if is_active:
-                        if st.button("⛔ Désactiver",
-                                     key=f"deact_stu_{stu['id']}",
-                                     use_container_width=True):
-                            _SQ.set_active(stu["id"], False); st.rerun()
-                    else:
-                        if st.button("✅ Activer",
-                                     key=f"act_stu_{stu['id']}",
-                                     type="primary",
-                                     use_container_width=True):
-                            _SQ.set_active(stu["id"], True); st.rerun()
-                with _sb2:
-                    if st.button("🔑 Réinit. MDP",
-                                 key=f"rst_stu_{stu['id']}",
-                                 use_container_width=True):
-                        st.session_state[f"show_rst_stu_{stu['id']}"] = True
-                if st.session_state.get(f"show_rst_stu_{stu['id']}"):
-                    with st.form(f"rst_stu_form_{stu['id']}"):
-                        _np2 = st.text_input("Nouveau mot de passe", type="password",
-                                             key=f"np_stu_{stu['id']}")
-                        if st.form_submit_button("Confirmer"):
-                            if _np2.strip():
-                                _SQ.reset_password(stu["id"], _hp_stu(_np2))
-                                st.session_state.pop(f"show_rst_stu_{stu['id']}", None)
-                                st.success("Mot de passe réinitialisé."); st.rerun()
-                            else:
-                                st.error("Mot de passe vide.")
-
     # ── RÉSULTATS D'EXAMENS ───────────────────────────────────────────────────
-    with tabs[9]:
+    with tabs[10]:
         import io as _io
         import pandas as _pd
         from db.queries import (GradeQueries as _GQR,
@@ -3048,31 +3451,18 @@ def render_admin_departement():
                 except Exception:
                     sessions_res = []
 
+                from db.queries import SESSION_NAMES as _STD_SESS, RATTRAPAGE_MAP as _RATT_MAP_ADM
                 session_names_res = [s["session_name"] for s in (sessions_res or [])]
+                # Sessions proposées = standards + existantes non-standard
+                _extra_sess = [s for s in session_names_res if s not in _STD_SESS]
+                _all_sess_opts = _STD_SESS + _extra_sess
 
-                col_ss, col_ns = st.columns([2, 1])
-                with col_ss:
-                    if session_names_res:
-                        session_sel_res = st.selectbox(
-                            "Session existante", options=session_names_res,
-                            key="res_session_sel"
-                        )
-                    else:
-                        session_sel_res = None
-                        st.caption("Aucune session disponible pour cette classe.")
-                with col_ns:
-                    new_session_res = st.text_input(
-                        "Ou saisir une session",
-                        placeholder="ex: Janvier 2025",
-                        key="res_new_session"
-                    )
-
-                active_session_res = (new_session_res.strip()
-                                      if new_session_res.strip()
-                                      else session_sel_res)
+                active_session_res = st.selectbox(
+                    "Session", options=_all_sess_opts, key="res_session_sel"
+                )
 
                 if not active_session_res:
-                    st.info("Sélectionnez ou saisissez une session pour afficher les résultats.")
+                    st.info("Sélectionnez une session pour afficher les résultats.")
                 else:
                     st.markdown(f"**Session : {active_session_res}**")
 
@@ -3118,6 +3508,7 @@ def render_admin_departement():
                     except Exception as e:
                         st.error(f"Erreur : {e}"); grades_res = []
 
+                    _has_ue_r = False
                     if not grades_res:
                         st.info("Aucune note enregistrée pour cette session.")
                     else:
@@ -3403,10 +3794,412 @@ def render_admin_departement():
                                 "pour activer les résultats par unité d'enseignement."
                             )
 
+                # ── Grille de délibération Excel ──────────────────────────────
+                st.divider()
+                st.markdown("#### 📊 Grille de délibération")
+                st.caption("Document collectif du jury — tous les étudiants en lignes, UEs/ECs en colonnes.")
+
+                if _has_ue_r and grades_res:
+                    if st.button("📥 Exporter la grille Excel", key="btn_grille_delib"):
+                        try:
+                            import io as _io_gd
+                            import pandas as _pd_gd
+                            from openpyxl import Workbook as _WB_gd
+                            from openpyxl.styles import PatternFill as _PF, Font as _FNT, Alignment as _ALN, Border as _BD, Side as _SD
+
+                            # 1. Construire by_student_ue : student_id → ue_id → course_id → best_norm
+                            _by_stu_ue_gd = {}
+                            _ue_meta_gd   = {}  # ue_id → {code, name, group, credits, courses:{cid:{code,name}}}
+                            _stu_meta_gd  = {}  # student_id → {number, name}
+                            for _g in grades_res:
+                                _sid = _g["student_id"]
+                                _uid = _g.get("ue_id")
+                                if not _uid:
+                                    continue
+                                _norm = (_g["grade"] / _g["max_grade"] * 20
+                                         if _g.get("max_grade") else 0.0)
+                                _by_stu_ue_gd.setdefault(_sid, {}).setdefault(_uid, {})
+                                _cid = _g["course_id"]
+                                if _cid not in _by_stu_ue_gd[_sid][_uid]:
+                                    _by_stu_ue_gd[_sid][_uid][_cid] = []
+                                _by_stu_ue_gd[_sid][_uid][_cid].append(_norm)
+
+                                if _uid not in _ue_meta_gd:
+                                    _ue_meta_gd[_uid] = {
+                                        "code":    _g.get("ue_code",""),
+                                        "name":    _g.get("ue_name",""),
+                                        "group":   _g.get("ue_group","A"),
+                                        "credits": float(_g.get("ue_credits") or 0),
+                                        "courses": {},
+                                    }
+                                _ue_meta_gd[_uid]["courses"][_cid] = {
+                                    "code": _g.get("course_code","") or "",
+                                    "name": _g.get("course_name",""),
+                                    "credits_ec": float(_g.get("credits_ec") or 1),
+                                }
+                                if _sid not in _stu_meta_gd:
+                                    _stu_meta_gd[_sid] = {
+                                        "number": _g.get("student_number",""),
+                                        "name":   _g.get("student_name",""),
+                                    }
+
+                            # 2. Trier les UEs par groupe + code
+                            _ue_sorted_gd = sorted(
+                                _ue_meta_gd.items(),
+                                key=lambda x: (x[1]["group"], x[1]["code"])
+                            )
+
+                            # 3. Construire les en-têtes
+                            _cols_gd = ["N° Étudiant", "Nom"]
+                            _col_types_gd = []  # ("stu",) | ("ue_note", uid) | ("ue_dec", uid) | ("ec", uid, cid) | ("total",str)
+                            _col_types_gd.append(("stu", "number"))
+                            _col_types_gd.append(("stu", "name"))
+
+                            for _uid, _umeta in _ue_sorted_gd:
+                                _ue_code = _umeta["code"] or _umeta["name"][:8]
+                                for _cid2, _cmeta in sorted(_umeta["courses"].items(),
+                                                             key=lambda x: x[1]["name"]):
+                                    _cn_short = (_cmeta["code"] or _cmeta["name"][:12])
+                                    _cols_gd.append(f"{_cn_short} /20")
+                                    _col_types_gd.append(("ec", _uid, _cid2))
+                                _cols_gd.append(f"{_ue_code} Note UE")
+                                _col_types_gd.append(("ue_note", _uid))
+                                _cols_gd.append(f"{_ue_code} Décision")
+                                _col_types_gd.append(("ue_dec", _uid))
+
+                            # Colonnes finales
+                            _sorted_groups_gd = sorted(set(u["group"] for u in _ue_meta_gd.values()))
+                            for _gl in _sorted_groups_gd:
+                                _cols_gd.append(f"Moy. Groupe {_gl}")
+                                _col_types_gd.append(("grp_avg", _gl))
+                            _cols_gd += ["Moy. Totale", "Crédits", "Décision"]
+                            _col_types_gd += [("total_avg",), ("credits",), ("decision",)]
+
+                            # 4. Construire les lignes
+                            _rows_gd = []
+                            for _sid, _ue_dict in _by_stu_ue_gd.items():
+                                _smeta = _stu_meta_gd.get(_sid, {})
+                                _row = {}
+                                _ue_notes = {}
+                                _ue_decs  = {}
+                                for _uid, _umeta in _ue_sorted_gd:
+                                    _ec_dict = _ue_dict.get(_uid, {})
+                                    _ec_avgs = {}
+                                    for _cid2, _cmeta in _umeta["courses"].items():
+                                        _exams = _ec_dict.get(_cid2, [])
+                                        _ec_avgs[_cid2] = (max(_exams) if _exams else None)
+                                    # Note UE pondérée par crédits EC
+                                    _total_cec = 0; _weighted_sum = 0
+                                    for _cid2, _cmeta in _umeta["courses"].items():
+                                        _ea = _ec_avgs.get(_cid2)
+                                        if _ea is not None:
+                                            _cec = _cmeta["credits_ec"]
+                                            _total_cec += _cec
+                                            _weighted_sum += _ea * _cec
+                                    _note_ue = _weighted_sum / _total_cec if _total_cec > 0 else 0.0
+                                    _dec_ue  = "V" if _note_ue >= _thr_ue_r else "NV"
+                                    _ue_notes[_uid] = round(_note_ue, 2)
+                                    _ue_decs[_uid]  = _dec_ue
+
+                                # Moyennes par groupe
+                                _grp_avgs_row = {}
+                                for _gl in _sorted_groups_gd:
+                                    _uids_gl = [uid for uid, um in _ue_meta_gd.items() if um["group"] == _gl]
+                                    _gl_uc   = sum(_ue_meta_gd[uid]["credits"] for uid in _uids_gl)
+                                    _gl_avg  = (
+                                        sum(_ue_notes.get(uid, 0) * _ue_meta_gd[uid]["credits"]
+                                            for uid in _uids_gl) / _gl_uc
+                                        if _gl_uc > 0 else 0.0
+                                    )
+                                    _grp_avgs_row[_gl] = round(_gl_avg, 2)
+
+                                _total_uc_row = sum(um["credits"] for um in _ue_meta_gd.values())
+                                _total_avg_row = (
+                                    sum(_ue_notes.get(uid, 0) * um["credits"]
+                                        for uid, um in _ue_meta_gd.items()) / _total_uc_row
+                                    if _total_uc_row > 0 else 0.0
+                                )
+                                _obt_credits_row = sum(
+                                    _ue_meta_gd[uid]["credits"]
+                                    for uid, dec in _ue_decs.items() if dec == "V"
+                                )
+                                _dec_final_row = "VAL" if all(d == "V" for d in _ue_decs.values()) else "NVAL"
+
+                                # Construire la ligne dans l'ordre des colonnes
+                                _row_vals = [_smeta.get("number",""), _smeta.get("name","")]
+                                for _ct in _col_types_gd[2:]:
+                                    if _ct[0] == "ec":
+                                        _, _uid2, _cid2 = _ct
+                                        _ea = _ue_dict.get(_uid2, {}).get(_cid2)
+                                        _row_vals.append(
+                                            round(max(_ea) if _ea else 0, 2) if _ea else ""
+                                        )
+                                    elif _ct[0] == "ue_note":
+                                        _row_vals.append(_ue_notes.get(_ct[1], ""))
+                                    elif _ct[0] == "ue_dec":
+                                        _row_vals.append(_ue_decs.get(_ct[1], ""))
+                                    elif _ct[0] == "grp_avg":
+                                        _row_vals.append(_grp_avgs_row.get(_ct[1], ""))
+                                    elif _ct[0] == "total_avg":
+                                        _row_vals.append(round(_total_avg_row, 2))
+                                    elif _ct[0] == "credits":
+                                        _row_vals.append(f"{_obt_credits_row:.0f}/{_total_uc_row:.0f}")
+                                    elif _ct[0] == "decision":
+                                        _row_vals.append(_dec_final_row)
+                                _rows_gd.append(_row_vals)
+
+                            # 5. Créer le DataFrame et exporter
+                            _df_gd = _pd_gd.DataFrame(_rows_gd, columns=_cols_gd)
+                            _buf_gd = _io_gd.BytesIO()
+                            _df_gd.to_excel(_buf_gd, index=False, engine="openpyxl")
+                            _fname_gd = (
+                                f"grille_delib_{class_res['name'].replace(' ','_')}"
+                                f"_{active_session_res.replace(' ','_')}.xlsx"
+                            )
+                            st.download_button(
+                                "📥 Télécharger la grille Excel",
+                                data=_buf_gd.getvalue(),
+                                file_name=_fname_gd,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True,
+                            )
+                        except Exception as _eg:
+                            st.error(f"Erreur génération grille : {_eg}")
+
+                # ── Délibération annuelle ─────────────────────────────────────
+                if class_res:
+                    st.divider()
+                    st.markdown("#### 📋 Délibération annuelle")
+                    st.caption(
+                        "Combine les meilleures notes de S1 (Normale ou Rattrapage) "
+                        "et S2 (Normale ou Rattrapage) pour déterminer qui passe ou redouble."
+                    )
+
+                    from db.queries import (DeliberationAnnuelleQueries as _DAQ,
+                                            GradeQueries as _GQDelib)
+
+                    _acad_yr_delib = (promo_res.get("academic_year","")
+                                      if promo_res else "")
+                    if not _acad_yr_delib:
+                        _acad_yr_delib = st.text_input(
+                            "Année académique", placeholder="ex: 2024-2025",
+                            key="delib_ay"
+                        )
+
+                    _thr_delib_credits = st.number_input(
+                        "Seuil crédits pour ADMIS", min_value=1, max_value=120,
+                        value=60, step=1, key="delib_thr_credits",
+                        help="Nombre minimum de crédits à valider pour être admis"
+                    )
+
+                    _col_delib1, _col_delib2 = st.columns(2)
+                    if _col_delib1.button("🔢 Calculer la délibération annuelle",
+                                          type="primary", key="btn_delib_calc"):
+                        _all_g = []
+                        try:
+                            _all_g = _GQDelib.get_all_sessions_for_annual(
+                                class_res["id"]) or []
+                        except Exception as _e_d:
+                            st.error(f"Erreur : {_e_d}")
+
+                        if not _all_g:
+                            st.warning(
+                                "Aucune note publiée trouvée dans les 4 sessions standard "
+                                "(S1 Normale, S1 Rattrapage, S2 Normale, S2 Rattrapage)."
+                            )
+                        else:
+                            # ── Calcul Python ──────────────────────────────────
+                            _by_stu_crs = {}
+                            _crs_info   = {}
+                            for _g in _all_g:
+                                _sid = _g["student_id"]
+                                _cid = _g["course_id"]
+                                _sem = "S1" if _g["session_name"].startswith("S1") else "S2"
+                                _norm = (float(_g["grade"]) / float(_g["max_grade"]) * 20
+                                         if _g.get("max_grade") else 0.0)
+                                _by_stu_crs.setdefault(_sid, {}).setdefault(_cid, {"S1":[], "S2":[]})
+                                _by_stu_crs[_sid][_cid][_sem].append(_norm)
+                                if _cid not in _crs_info:
+                                    _crs_info[_cid] = {
+                                        "name":       _g.get("course_name",""),
+                                        "credits_ec": float(_g.get("credits_ec") or 1),
+                                        "ue_id":      _g.get("ue_id"),
+                                        "ue_name":    _g.get("ue_name",""),
+                                        "ue_code":    _g.get("ue_code",""),
+                                        "ue_credits": float(_g.get("ue_credits") or 0),
+                                        "ue_group":   _g.get("ue_group","A"),
+                                    }
+                                if "student_name" not in _by_stu_crs[_sid]:
+                                    _by_stu_crs[_sid]["_meta"] = {
+                                        "student_name":   _g.get("student_name",""),
+                                        "student_number": _g.get("student_number",""),
+                                    }
+
+                            _delib_rows = []
+                            for _sid, _crs_dict in _by_stu_crs.items():
+                                _meta = _crs_dict.pop("_meta", {})
+                                # Meilleure note annuelle par cours
+                                _best = {}
+                                for _cid2, _sems in _crs_dict.items():
+                                    _s1b = max(_sems["S1"]) if _sems["S1"] else None
+                                    _s2b = max(_sems["S2"]) if _sems["S2"] else None
+                                    if _s1b is not None and _s2b is not None:
+                                        _ann = (_s1b + _s2b) / 2
+                                    else:
+                                        _ann = _s1b if _s1b is not None else _s2b
+                                    _best[_cid2] = {"s1": _s1b, "s2": _s2b, "ann": _ann}
+
+                                # Construire ue_map annuel
+                                _ue_m = {}
+                                for _cid2, _b in _best.items():
+                                    if _b["ann"] is None:
+                                        continue
+                                    _ci = _crs_info.get(_cid2, {})
+                                    _uid = _ci.get("ue_id")
+                                    if _uid:
+                                        _ue_m.setdefault(_uid, {
+                                            "name": _ci["ue_name"],
+                                            "credits": _ci["ue_credits"],
+                                            "group": _ci["ue_group"],
+                                            "courses": {},
+                                        })
+                                        _ue_m[_uid]["courses"][_cid2] = {
+                                            "cred": _ci["credits_ec"],
+                                            "ann": _b["ann"],
+                                        }
+
+                                for _uid2, _ue in _ue_m.items():
+                                    _tc = sum(c["cred"] for c in _ue["courses"].values())
+                                    _ue["note_ue"] = (
+                                        sum(c["ann"] * c["cred"] for c in _ue["courses"].values()) / _tc
+                                        if _tc > 0 else 0.0
+                                    )
+                                    _ue["val"] = _ue["note_ue"] >= 10.0
+                                    _ue["cred_obt"] = _ue["credits"] if _ue["val"] else 0.0
+
+                                _tot_uc   = sum(u["credits"] for u in _ue_m.values())
+                                _obt_uc   = sum(u["cred_obt"] for u in _ue_m.values())
+                                _moy_ann  = (
+                                    sum(u["note_ue"] * u["credits"] for u in _ue_m.values()) / _tot_uc
+                                    if _tot_uc > 0 else 0.0
+                                )
+                                # S1/S2 avg simplifiés (moyenne des meilleures notes par cours)
+                                _s1_vals = [v["s1"] for v in _best.values() if v["s1"] is not None]
+                                _s2_vals = [v["s2"] for v in _best.values() if v["s2"] is not None]
+                                _moy_s1  = sum(_s1_vals) / len(_s1_vals) if _s1_vals else None
+                                _moy_s2  = sum(_s2_vals) / len(_s2_vals) if _s2_vals else None
+                                _ecs_reprendre = [
+                                    _crs_info[_cid2]["name"]
+                                    for _uid2, _ue in _ue_m.items() if not _ue["val"]
+                                    for _cid2 in _ue["courses"]
+                                    if _best.get(_cid2,{}).get("ann",10) < 10
+                                ]
+                                _decision = ("admis" if _obt_uc >= _thr_delib_credits
+                                             else "redoublant")
+
+                                _delib_rows.append({
+                                    "student_id":     _sid,
+                                    "student_name":   _meta.get("student_name",""),
+                                    "student_number": _meta.get("student_number",""),
+                                    "moy_s1":         round(_moy_s1, 2) if _moy_s1 else None,
+                                    "moy_s2":         round(_moy_s2, 2) if _moy_s2 else None,
+                                    "moy_annuelle":   round(_moy_ann, 2),
+                                    "credits_obtenus": int(_obt_uc),
+                                    "credits_total":   int(_tot_uc) or _thr_delib_credits,
+                                    "ecs_a_reprendre": ", ".join(_ecs_reprendre),
+                                    "decision":       _decision,
+                                })
+
+                            if not _delib_rows:
+                                st.warning("Impossible de calculer — vérifiez que les UE sont assignées aux cours.")
+                            else:
+                                st.session_state["_delib_rows_cache"] = _delib_rows
+                                st.session_state["_delib_ay_cache"]   = _acad_yr_delib
+
+                    # Affichage résultats calculés
+                    if st.session_state.get("_delib_rows_cache"):
+                        _dr = st.session_state["_delib_rows_cache"]
+                        _dy = st.session_state.get("_delib_ay_cache","")
+                        import pandas as _pd_d, io as _io_d
+                        _df_d = _pd_d.DataFrame([{
+                            "Étudiant":       r["student_name"],
+                            "N° Étudiant":    r["student_number"],
+                            "Moy. S1":        r["moy_s1"],
+                            "Moy. S2":        r["moy_s2"],
+                            "Moy. Annuelle":  r["moy_annuelle"],
+                            "Crédits obtenus":r["credits_obtenus"],
+                            "Crédits total":  r["credits_total"],
+                            "ECs à reprendre":r["ecs_a_reprendre"],
+                            "Décision":       r["decision"].upper(),
+                        } for r in _dr])
+
+                        _n_adm = sum(1 for r in _dr if r["decision"]=="admis")
+                        _n_red = sum(1 for r in _dr if r["decision"]=="redoublant")
+                        _c1d, _c2d, _c3d = st.columns(3)
+                        _c1d.metric("Total étudiants", len(_dr))
+                        _c2d.metric("✅ Admis",         _n_adm)
+                        _c3d.metric("🔄 Redoublants",   _n_red)
+
+                        st.dataframe(_df_d, use_container_width=True, hide_index=True)
+
+                        _cd1, _cd2, _cd3 = st.columns(3)
+                        if _cd1.button("💾 Enregistrer les décisions", key="btn_delib_save"):
+                            try:
+                                for _r in _dr:
+                                    _DAQ.upsert(
+                                        student_id      = _r["student_id"],
+                                        class_id        = class_res["id"],
+                                        academic_year   = _dy,
+                                        moy_s1          = _r["moy_s1"],
+                                        moy_s2          = _r["moy_s2"],
+                                        moy_annuelle    = _r["moy_annuelle"],
+                                        credits_obtenus = _r["credits_obtenus"],
+                                        credits_total   = _r["credits_total"],
+                                        ecs_a_reprendre = _r["ecs_a_reprendre"],
+                                        decision        = _r["decision"],
+                                    )
+                                st.success(f"✅ {len(_dr)} décisions enregistrées.")
+                            except Exception as _e2:
+                                st.error(f"Erreur : {_e2}")
+
+                        if _cd2.button("📢 Publier pour les étudiants", type="primary",
+                                       key="btn_delib_pub"):
+                            try:
+                                _DAQ.publish(class_res["id"], _dy, user["id"])
+                                # Mettre à jour le statut dans le registre
+                                from db.queries import StudentRegistryQueries as _SRQ2
+                                for _r in _dr:
+                                    try:
+                                        _reg_row = _SRQ2.get_by_student_number(
+                                            _r["student_number"],
+                                            class_res.get("university_id"))
+                                        if _reg_row:
+                                            _SRQ2.update_statut(
+                                                _reg_row["id"], _r["decision"])
+                                    except Exception:
+                                        pass
+                                st.success(
+                                    f"✅ Délibération publiée — "
+                                    f"Admis : {_n_adm} · Redoublants : {_n_red}"
+                                )
+                                st.session_state.pop("_delib_rows_cache", None)
+                                st.rerun()
+                            except Exception as _e3:
+                                st.error(f"Erreur publication : {_e3}")
+
+                        _buf_d = _io_d.BytesIO()
+                        _df_d.to_excel(_buf_d, index=False, engine="openpyxl")
+                        _cd3.download_button(
+                            "📥 Exporter Excel",
+                            data=_buf_d.getvalue(),
+                            file_name=f"deliberation_{_dy}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 10 : FILIÈRES
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[10]:
+    with tabs[2]:
         st.markdown("#### Filières du département")
         st.caption("Une filière regroupe plusieurs options d'étude au sein d'un département.")
 
@@ -3467,7 +4260,7 @@ def render_admin_departement():
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 11 : OPTIONS
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[11]:
+    with tabs[3]:
         st.markdown("#### Options d'étude")
         st.caption("Chaque option appartient à une filière. "
                    "Ex : Filière Informatique → Option Génie Logiciel, Option Réseaux…")
@@ -3534,9 +4327,9 @@ def render_admin_departement():
                                     st.error(f"Erreur : {e}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 12 : INSCRIPTIONS (fusionné dans Registre)
+    # ONGLET 9 : INSCRIPTIONS (fusionné dans Registre)
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[12]:
+    with tabs[9]:
         st.info(
             "La gestion des inscriptions et des statuts académiques "
             "(Inscrit / Admis / Redoublant / Transféré / Abandonné) "
@@ -3545,9 +4338,9 @@ def render_admin_departement():
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 13 : DEMANDES DE MODIFICATION DE COTES
+    # ONGLET 14 : DEMANDES DE MODIFICATION DE COTES
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[13]:
+    with tabs[14]:
         from datetime import datetime as _dt
 
         st.markdown("#### Demandes de modification de cotes")
@@ -3645,9 +4438,9 @@ def render_admin_departement():
                                 st.error(f"Erreur : {e}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 14 : PRÉSENCES
+    # ONGLET 12 : PRÉSENCES
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[14]:
+    with tabs[12]:
         import pandas as _pd_pres
 
         st.markdown("#### Suivi des présences")
@@ -3840,9 +4633,9 @@ def render_admin_departement():
                     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 16 : BULLETINS
+    # ONGLET 11 : BULLETINS
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[16]:
+    with tabs[11]:
         from db.queries import (BulletinQueries as _BQTAB,
                                 StudentResultsQueries as _SRQTAB,
                                 ClassQueries as _CQT16,
@@ -3961,9 +4754,9 @@ def render_admin_departement():
                             )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 17 : ANNÉES ACADÉMIQUES
+    # ONGLET 16 : ANNÉES ACADÉMIQUES
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[17]:
+    with tabs[16]:
         from db.queries import AcademicYearQueries as _AYQ
 
         _ay_uni_id = (dept.get("university_id") if dept else None) or user.get("university_id")
@@ -4151,9 +4944,9 @@ def render_admin_departement():
 
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 18 : ANALYSES (anomalies, at-risk, top étudiants)
+    # ONGLET 17 : ANALYSES (anomalies, at-risk, top étudiants)
     # ══════════════════════════════════════════════════════════════════════════
-    with tabs[18]:
+    with tabs[17]:
         from db.queries import (AnalyticsQueries as _AnaQ,
                                 PromotionQueries  as _PQA,
                                 ClassQueries      as _CQA,

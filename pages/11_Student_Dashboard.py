@@ -1,7 +1,7 @@
 # pages/11_Student_Dashboard.py
 import streamlit as st
 from datetime import datetime, timedelta
-from utils.auth import require_student_auth, get_current_student, logout_student
+from utils.auth import require_student_auth, get_current_student, logout_student, change_student_password
 from utils.components import (inject_global_css, announcement_card,
                                week_nav, render_schedule_table, dashboard_header)
 from utils.storage import upload_pdf, get_pdf_bytes, get_pdf_base64, TP_SUBMISSIONS_BUCKET
@@ -71,7 +71,7 @@ def _mention_color(avg):
     return "#EF4444"
 
 # ── Onglets ────────────────────────────────────────────────────────────────────
-tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours = st.tabs([
+tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_compte = st.tabs([
     "📅 Mon Horaire",
     "📝 Mes TPs",
     "📊 Mes Notes",
@@ -80,6 +80,8 @@ tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages,
     "📍 Mon Assiduité",
     "💬 Messages",
     "📈 Mon Parcours",
+    "📈 Progression",
+    "⚙️ Mon Compte",
 ])
 
 
@@ -467,24 +469,106 @@ with tab_cours:
 # ONGLET 5 : MON BULLETIN
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_bulletin:
+    from db.queries import DeliberationAnnuelleQueries as _DAQ_stu
+
     try:
         pub_sessions = GradeQueries.get_published_sessions_by_student(student["id"])
     except Exception as e:
         st.error(str(e)); pub_sessions = []
 
-    if not pub_sessions:
+    try:
+        _pub_delib_years = _DAQ_stu.get_published_years_by_student(student["id"]) or []
+    except Exception:
+        _pub_delib_years = []
+
+    _SESSION_LABEL_DELIB = "📋 Délibération annuelle"
+    session_choices = [s["session_name"] for s in (pub_sessions or [])]
+    if _pub_delib_years:
+        session_choices = [_SESSION_LABEL_DELIB] + session_choices
+
+    if not session_choices:
         st.info(
             "Aucun bulletin publié pour l'instant. "
             "Les résultats apparaîtront ici une fois que votre département les aura publiés."
         )
     else:
-        session_choices = [s["session_name"] for s in pub_sessions]
         selected_session = st.selectbox(
             "Sélectionner une session", options=session_choices,
             key="bulletin_session_sel"
         )
 
-        if selected_session:
+        # ── VUE DÉLIBÉRATION ANNUELLE ─────────────────────────────────────────
+        if selected_session == _SESSION_LABEL_DELIB:
+            _delib_year_choices = [r["academic_year"] for r in _pub_delib_years]
+            _sel_delib_yr = st.selectbox(
+                "Année académique", options=_delib_year_choices,
+                key="delib_yr_stu"
+            )
+            if _sel_delib_yr:
+                try:
+                    _delib = _DAQ_stu.get_by_student_year(student["id"], _sel_delib_yr)
+                except Exception as _e_d:
+                    st.error(str(_e_d)); _delib = None
+
+                if not _delib:
+                    st.info("Aucune délibération annuelle disponible.")
+                else:
+                    _dec     = _delib.get("decision","en_cours")
+                    _dec_cfg = {
+                        "admis":      ("✅ Admis(e)",      "#059669","#D1FAE5"),
+                        "redoublant": ("🔄 Redoublant(e)", "#D97706","#FEF3C7"),
+                        "en_cours":   ("⏳ En cours",      "#64748B","#F1F5F9"),
+                    }
+                    _dec_lbl, _dec_clr, _dec_bg = _dec_cfg.get(_dec, _dec_cfg["en_cours"])
+
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg,{_dec_clr}22,{_dec_clr}11);
+                                border:1px solid {_dec_clr}44;border-radius:12px;
+                                padding:1rem 1.5rem;margin-bottom:1rem">
+                        <div style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem">
+                            Délibération annuelle · <strong>{_sel_delib_yr}</strong>
+                        </div>
+                        <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap">
+                            <div>
+                                <div style="font-size:0.75rem;color:#94A3B8">Moyenne annuelle</div>
+                                <div style="font-size:2rem;font-weight:700;color:{_dec_clr}">
+                                    {float(_delib['moy_annuelle'] or 0):.2f}
+                                    <span style="font-size:1rem;color:#94A3B8">/20</span>
+                                </div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.75rem;color:#94A3B8">Crédits validés</div>
+                                <div style="font-size:1.5rem;font-weight:600;color:{_dec_clr}">
+                                    {_delib['credits_obtenus']} / {_delib['credits_total']}
+                                </div>
+                            </div>
+                            <div style="margin-left:auto">
+                                <div style="font-size:0.75rem;color:#94A3B8">Décision</div>
+                                <div style="background:{_dec_bg};color:{_dec_clr};
+                                            padding:6px 18px;border-radius:20px;
+                                            font-weight:700;font-size:1rem;
+                                            display:inline-block;margin-top:4px">
+                                    {_dec_lbl}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    _c1d, _c2d = st.columns(2)
+                    if _delib.get("moy_s1") is not None:
+                        _c1d.metric("Moyenne S1", f"{float(_delib['moy_s1']):.2f}/20")
+                    if _delib.get("moy_s2") is not None:
+                        _c2d.metric("Moyenne S2", f"{float(_delib['moy_s2']):.2f}/20")
+
+                    if _delib.get("ecs_a_reprendre"):
+                        st.warning(
+                            f"**ECs à reprendre :** {_delib['ecs_a_reprendre']}"
+                        )
+                    else:
+                        st.success("Tous les ECs validés ✅")
+
+        elif selected_session:
             try:
                 bulletin_grades = GradeQueries.get_bulletin_by_student(
                     student["id"], selected_session
@@ -765,6 +849,8 @@ with tab_bulletin:
                             final_decision=final_decision,
                             mention=men_label,
                             rank=rank_val,
+                            faculty_name=_cls_info.get("faculty_name","") if _cls_info else "",
+                            department_name=_cls_info.get("department_name","") if _cls_info else "",
                         )
                         st.download_button(
                             "📄 Télécharger le bulletin PDF (format UE)",
@@ -1043,3 +1129,103 @@ with tab_parcours:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET 9 : PROGRESSION
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_progression:
+    import pandas as _pd_prog
+    from db.queries import DeliberationAnnuelleQueries as _DAQ_prog
+    from db.connection import execute_query as _eq_prog
+
+    st.markdown("#### 📈 Mon parcours académique")
+
+    # ── 1. Délibérations annuelles publiées ────────────────────────────────────
+    _annual_rows = []
+    try:
+        _pub_years_prog = _DAQ_prog.get_published_years_by_student(student["id"]) or []
+        for _yr_row in _pub_years_prog:
+            _yr = _yr_row["academic_year"]
+            _d  = _DAQ_prog.get_by_student_year(student["id"], _yr)
+            if _d:
+                _annual_rows.append({
+                    "Année":            _yr,
+                    "Moy S1":           float(_d["moy_s1"]) if _d.get("moy_s1") is not None else None,
+                    "Moy S2":           float(_d["moy_s2"]) if _d.get("moy_s2") is not None else None,
+                    "Moy Annuelle":     float(_d["moy_annuelle"]) if _d.get("moy_annuelle") is not None else None,
+                    "Crédits validés":  f"{_d.get('credits_obtenus',0)}/{_d.get('credits_total',0)}",
+                    "Décision":         _d.get("decision","—"),
+                })
+    except Exception as _e_prog:
+        st.warning(f"Impossible de charger les délibérations annuelles : {_e_prog}")
+
+    # ── 2. Résultats par session ───────────────────────────────────────────────
+    _session_rows = []
+    try:
+        _session_rows = _eq_prog(
+            """SELECT academic_year, session_name, average, decision, rank
+               FROM student_session_results
+               WHERE student_id = %s ORDER BY academic_year, session_name""",
+            (student["id"],),
+            fetch="all",
+        ) or []
+    except Exception:
+        _session_rows = []
+
+    # ── Affichage ──────────────────────────────────────────────────────────────
+    _has_annual  = len(_annual_rows) > 0
+    _has_session = len(_session_rows) > 0
+
+    if not _has_annual and not _has_session:
+        st.info("Aucun historique académique disponible pour l'instant.")
+    else:
+        if _has_annual:
+            st.markdown("##### Bilan annuel")
+            _df_annual = _pd_prog.DataFrame(_annual_rows)
+            st.dataframe(_df_annual, use_container_width=True, hide_index=True)
+
+            # Graphique des moyennes annuelles
+            _chart_data = _df_annual[["Année","Moy Annuelle"]].dropna(subset=["Moy Annuelle"])
+            if not _chart_data.empty:
+                st.line_chart(
+                    _chart_data.set_index("Année"),
+                    use_container_width=True,
+                )
+
+        if _has_session:
+            st.markdown("##### Résultats par session")
+            _df_sess = _pd_prog.DataFrame([{
+                "Année":      r["academic_year"],
+                "Session":    r["session_name"],
+                "Moyenne":    float(r["average"]) if r.get("average") is not None else None,
+                "Rang":       r.get("rank"),
+                "Décision":   r.get("decision","—"),
+            } for r in _session_rows])
+            st.dataframe(_df_sess, use_container_width=True, hide_index=True)
+
+with tab_compte:
+    st.markdown("#### ⚙️ Mon Compte")
+    st.markdown(f"**Nom d'utilisateur :** @{_username}")
+    st.markdown(f"**Numéro étudiant :** {student['student_number']}")
+    st.divider()
+    st.markdown("##### 🔑 Changer mon mot de passe")
+    with st.form("change_pwd_form"):
+        cur_pwd  = st.text_input("Mot de passe actuel *", type="password", placeholder="••••••••")
+        col_np1, col_np2 = st.columns(2)
+        with col_np1:
+            new_pwd1 = st.text_input("Nouveau mot de passe *", type="password", placeholder="Min 8 caractères")
+        with col_np2:
+            new_pwd2 = st.text_input("Confirmer *", type="password", placeholder="••••••••")
+        if st.form_submit_button("✅ Enregistrer le nouveau mot de passe", type="primary"):
+            ok, msg = change_student_password(
+                student_id=student["id"],
+                current_password=cur_pwd,
+                new_password=new_pwd1,
+                confirm=new_pwd2,
+            )
+            if ok:
+                st.success(f"✅ {msg}")
+            else:
+                st.error(f"❌ {msg}")
+    st.caption("Si vous avez oublié votre mot de passe, contactez l'administration.")

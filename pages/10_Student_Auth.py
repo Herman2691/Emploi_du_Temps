@@ -1,16 +1,23 @@
 # pages/10_Student_Auth.py
 import streamlit as st
 from utils.auth import login_student, register_student, get_current_student
-from utils.components import auth_page_css, auth_header
+from utils.components import auth_page_css
 from db.queries import UniversityQueries, StudentRegistryQueries
 
-# Redirection si déjà connecté
 if get_current_student():
     st.switch_page("pages/11_Student_Dashboard.py")
 
 st.markdown(auth_page_css("#059669", "#047857"), unsafe_allow_html=True)
+
 st.markdown("""
 <style>
+[data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {
+    background: white;
+    border: 1.5px solid #E2E8F0;
+    border-radius: 22px;
+    padding: 2.5rem 2rem 2rem !important;
+    box-shadow: 0 8px 32px rgba(5,150,105,0.09), 0 2px 8px rgba(0,0,0,0.04);
+}
 .registry-card {
     background: #ECFDF5;
     border: 1px solid #6EE7B7;
@@ -26,11 +33,29 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div style='height:6vh'></div>", unsafe_allow_html=True)
-_, col, _ = st.columns([1, 1.6, 1])
+st.markdown("<div style='height:3vh'></div>", unsafe_allow_html=True)
+_, col, _ = st.columns([1, 1.5, 1])
 
 with col:
-    auth_header("🎓", "Espace Étudiant", "UniSchedule · Vos cours, TPs et notes", "#059669")
+
+    # ── En-tête compact ────────────────────────────────────────────────────────
+    st.markdown("""
+<div style="text-align:center;margin-bottom:1.5rem">
+    <div style="width:64px;height:64px;
+                background:linear-gradient(135deg,#059669,#047857);
+                border-radius:18px;margin:0 auto 1rem;
+                display:flex;align-items:center;justify-content:center;
+                font-size:2rem;
+                box-shadow:0 6px 22px rgba(5,150,105,0.28)">🎓</div>
+    <h2 style="color:#1E293B;font-family:'Poppins',sans-serif;
+               font-size:1.5rem;font-weight:700;margin:0;line-height:1.2">
+        Espace Étudiant
+    </h2>
+    <p style="color:#64748B;font-size:0.8rem;margin:0.4rem 0 0">
+        UniSchedule · Vos cours, TPs et notes
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
     tab_login, tab_register = st.tabs(["🔑 Se connecter", "📝 Créer un compte"])
 
@@ -42,12 +67,6 @@ with col:
 
     # ── CONNEXION ─────────────────────────────────────────────────────────────
     with tab_login:
-        st.markdown("""
-<div style="background:white;border:1px solid #E2E8F0;
-            border-radius:16px;padding:1.75rem 1.75rem 1.25rem;margin-top:0.5rem;
-            box-shadow:0 4px 20px rgba(0,0,0,0.06),0 1px 3px rgba(0,0,0,0.04)">
-""", unsafe_allow_html=True)
-
         uni_login = st.selectbox(
             "Université *",
             options=universities,
@@ -67,9 +86,7 @@ with col:
             placeholder="••••••••",
             key="login_pwd"
         )
-
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-
         if st.button("→ Se connecter", type="primary",
                      use_container_width=True, key="btn_login"):
             if not uni_login:
@@ -85,22 +102,14 @@ with col:
                 else:
                     st.error(f"❌ {msg}")
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
     # ── INSCRIPTION ───────────────────────────────────────────────────────────
     with tab_register:
         st.markdown("""
-<div style="background:white;border:1px solid #E2E8F0;
-            border-radius:16px;padding:1.75rem 1.75rem 1.25rem;margin-top:0.5rem;
-            box-shadow:0 4px 20px rgba(0,0,0,0.06),0 1px 3px rgba(0,0,0,0.04)">
+<p style="color:#64748B;font-size:0.82rem;margin-bottom:1rem">
+    Entrez votre numéro étudiant pour vérifier votre inscription,
+    puis choisissez un nom d'utilisateur et un mot de passe.
+</p>
 """, unsafe_allow_html=True)
-
-        st.markdown("""
-        <p style="color:#64748B;font-size:0.82rem;margin-bottom:1rem">
-            Entrez votre numéro étudiant pour vérifier votre inscription,
-            puis choisissez un nom d'utilisateur et un mot de passe.
-        </p>
-        """, unsafe_allow_html=True)
 
         uni_reg = st.selectbox(
             "Université *",
@@ -116,7 +125,6 @@ with col:
             key="reg_num"
         )
 
-        # Vérification live du numéro étudiant
         registry_entry = None
         if uni_reg and num_reg.strip():
             try:
@@ -133,7 +141,7 @@ with col:
                     _opt_d  = registry_entry.get("option_name") or registry_entry.get("option_txt") or ""
                     _pr_d   = registry_entry.get("promotion_name") or ""
                     _yr_d   = registry_entry.get("annee_academique") or ""
-                    _ec_d   = registry_entry.get("ecole_provenance") or ""
+                    _ec_d   = registry_entry.get("provenance") or ""
                     _dept_d = registry_entry.get("department_name") or ""
 
                     _sub_parts = []
@@ -170,7 +178,6 @@ with col:
             placeholder="ex: jean.dupont",
             key="reg_username"
         )
-
         col_pwd1, col_pwd2 = st.columns(2)
         with col_pwd1:
             pwd1_reg = st.text_input("Mot de passe *",
@@ -207,17 +214,14 @@ with col:
         if btn_disabled and num_reg.strip():
             st.caption("Le bouton s'active une fois le numéro étudiant reconnu.")
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+    # ── Retour + footer ────────────────────────────────────────────────────────
+    st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
     if st.button("← Retour à l'accueil", type="secondary",
                  use_container_width=True):
         st.switch_page("pages/1_Accueil.py")
 
     st.markdown("""
-    <div style="text-align:center;margin-top:1.5rem">
-        <p style="color:#334155;font-size:0.72rem">
-            🎓 UniSchedule &nbsp;·&nbsp; © 2025
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+<div style="text-align:center;margin-top:1.5rem">
+    <p style="color:#94A3B8;font-size:0.68rem">🎓 UniSchedule · © 2025</p>
+</div>
+""", unsafe_allow_html=True)

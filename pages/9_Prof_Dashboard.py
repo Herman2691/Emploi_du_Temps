@@ -7,12 +7,11 @@ from utils.storage import (upload_pdf, delete_file, get_pdf_bytes,
                             COURSE_DOCS_BUCKET, TP_SUBMISSIONS_BUCKET)
 from db.queries import (ProfessorExtQueries, CourseDocumentQueries,
                          TpAssignmentQueries, TpSubmissionQueries,
-                         GradeQueries, StudentQueries, CourseQueries,
-                         PromotionQueries, FacultyQueries, DepartmentQueries,
+                         GradeQueries, StudentQueries,
                          ScheduleQueries, AttendanceQueries,
                          ClassMessageQueries, GradeClaimQueries,
                          GradeAuditQueries, GradeModificationRequestQueries,
-                         BulletinQueries)
+                         BulletinQueries, ClassQueries)
 
 inject_global_css()
 require_prof_auth()
@@ -38,7 +37,6 @@ try:
     courses    = ProfessorExtQueries.get_courses(prof_id)   # cours qu'il enseigne
     tps        = TpAssignmentQueries.get_by_professor(prof_id)
     docs       = CourseDocumentQueries.get_by_professor(prof_id)
-    faculties  = FacultyQueries.get_by_university(uni_id) if uni_id else []
 except Exception as e:
     st.error(f"Erreur chargement données : {e}")
     st.stop()
@@ -56,7 +54,9 @@ c4.metric("Documents",   len(docs))
 st.divider()
 
 # ── Onglets ────────────────────────────────────────────────────────────────────
-tab_docs, tab_tp, tab_notes, tab_classes, tab_presence, tab_messages, tab_claims = st.tabs([
+(tab_schedule, tab_docs, tab_tp, tab_notes, tab_classes,
+ tab_presence, tab_messages, tab_claims) = st.tabs([
+    "📅 Mon Emploi du Temps",
     "📄 Cours & Documents",
     "📝 Travaux Pratiques",
     "📊 Notes",
@@ -65,6 +65,178 @@ tab_docs, tab_tp, tab_notes, tab_classes, tab_presence, tab_messages, tab_claims
     "💬 Messages",
     "🔔 Réclamations",
 ])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET 0 : MON EMPLOI DU TEMPS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_schedule:
+    from datetime import timedelta as _td_sched
+
+    def _fmt_time(t) -> str:
+        if t is None: return "--:--"
+        if isinstance(t, _td_sched):
+            h, m = divmod(int(t.total_seconds()) // 60, 60)
+            return f"{h:02d}:{m:02d}"
+        return str(t)[:5]
+
+    try:
+        _schedules = ScheduleQueries.get_by_professor(prof_id) or []
+    except Exception as _e:
+        st.error(f"Erreur chargement emploi du temps : {_e}")
+        _schedules = []
+
+    _DAYS_ORDER = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"]
+
+    _SLOT_COLORS = {
+        "cours":   ("#2563EB", "#EFF6FF"),
+        "td":      ("#059669", "#ECFDF5"),
+        "tp":      ("#D97706", "#FFFBEB"),
+        "examen":  ("#DC2626", "#FEF2F2"),
+        "ferie":   ("#6B7280", "#F9FAFB"),
+        "autre":   ("#7C3AED", "#F5F3FF"),
+    }
+    _SLOT_LABELS = {
+        "cours": "Cours", "td": "TD", "tp": "TP",
+        "examen": "Examen", "ferie": "Férié", "autre": "Autre",
+    }
+
+    if not _schedules:
+        st.info("Aucun créneau trouvé dans votre emploi du temps. "
+                "Contactez l'administrateur de département.")
+    else:
+        # ── Filtres ───────────────────────────────────────────────────────
+        _sf1, _sf2, _sf3 = st.columns(3)
+
+        _all_facs_sch = sorted({s["faculty_name"] for s in _schedules})
+        _fil_fac_sch  = _sf1.selectbox(
+            "Faculté", ["Toutes"] + _all_facs_sch, key="sch_fil_fac"
+        )
+        _all_wt = sorted({s.get("week_type","Toutes") for s in _schedules})
+        _fil_wt = _sf2.selectbox(
+            "Semaine", ["Toutes"] + [w for w in _all_wt if w != "Toutes"],
+            key="sch_fil_wt"
+        )
+        _all_types = sorted({s.get("slot_type","cours") for s in _schedules})
+        _fil_type  = _sf3.selectbox(
+            "Type", ["Tous"] + _all_types,
+            format_func=lambda x: "Tous" if x == "Tous" else _SLOT_LABELS.get(x, x),
+            key="sch_fil_type"
+        )
+
+        _sch_filt = _schedules
+        if _fil_fac_sch != "Toutes":
+            _sch_filt = [s for s in _sch_filt if s["faculty_name"] == _fil_fac_sch]
+        if _fil_wt != "Toutes":
+            _sch_filt = [s for s in _sch_filt
+                         if s.get("week_type") in (_fil_wt, "Toutes")]
+        if _fil_type != "Tous":
+            _sch_filt = [s for s in _sch_filt if s.get("slot_type") == _fil_type]
+
+        # ── Métriques rapides ─────────────────────────────────────────────
+        _days_actifs = {s["day"] for s in _sch_filt}
+        _sm1, _sm2, _sm3, _sm4 = st.columns(4)
+        _sm1.metric("Créneaux", len(_sch_filt))
+        _sm2.metric("Jours actifs", len(_days_actifs))
+        _sm3.metric("Cours distincts",
+                    len({s.get("course_name") for s in _sch_filt}))
+        _sm4.metric("Classes",
+                    len({s.get("class_name") for s in _sch_filt}))
+        st.divider()
+
+        # ── Grille par jour ───────────────────────────────────────────────
+        _by_day = {d: [] for d in _DAYS_ORDER}
+        for _s in _sch_filt:
+            if _s["day"] in _by_day:
+                _by_day[_s["day"]].append(_s)
+
+        for _day in _DAYS_ORDER:
+            _slots = _by_day[_day]
+            if not _slots:
+                continue
+
+            st.markdown(
+                f"<h4 style='margin:1.2rem 0 0.4rem;color:#1E293B'>📆 {_day}</h4>",
+                unsafe_allow_html=True
+            )
+
+            for _sl in _slots:
+                # ── Pré-calcul de toutes les valeurs ──────────────────────
+                _stype = _sl.get("slot_type", "cours")
+                _border_clr, _bg_clr = _SLOT_COLORS.get(_stype, _SLOT_COLORS["autre"])
+                _type_lbl  = _SLOT_LABELS.get(_stype, _stype.upper())
+                _heures    = f"{_fmt_time(_sl['start_time'])} – {_fmt_time(_sl['end_time'])}"
+                _room_disp = _sl.get("room_name") or "—"
+                _course    = _sl.get("course_name") or "—"
+                _code      = _sl.get("course_code") or ""
+                _classe    = _sl.get("class_name") or "—"
+                _promo     = _sl.get("promotion_name") or "—"
+                _annee     = _sl.get("academic_year") or ""
+                _dept      = _sl.get("department_name") or "—"
+                _fac       = _sl.get("faculty_name") or "—"
+                _wt        = _sl.get("week_type") or "Toutes"
+
+                # badges optionnels pré-construits
+                _code_span = (
+                    f"<span style='color:#94A3B8;font-size:0.78rem'>"
+                    f"&nbsp;·&nbsp;{_code}</span>"
+                ) if _code else ""
+
+                _wt_span = (
+                    f"<span style='background:#F1F5F9;color:#64748B;"
+                    f"font-size:0.7rem;padding:1px 7px;border-radius:8px;"
+                    f"margin-left:8px'>Sem. {_wt}</span>"
+                ) if _wt not in ("Toutes", None) else ""
+
+                _valid_div = ""
+                if _sl.get("valid_from") or _sl.get("valid_until"):
+                    _vf = str(_sl.get("valid_from", ""))[:10] or "…"
+                    _vu = str(_sl.get("valid_until", ""))[:10] or "…"
+                    _valid_div = (
+                        f"<div style='margin-top:0.3rem'>"
+                        f"<span style='color:#94A3B8;font-size:0.72rem'>"
+                        f"📅 {_vf} → {_vu}</span></div>"
+                    )
+
+                # ── Rendu HTML ────────────────────────────────────────────
+                _html = (
+                    f"<div style='background:{_bg_clr};border-left:4px solid {_border_clr};"
+                    f"border-radius:10px;padding:0.75rem 1rem;margin-bottom:0.5rem'>"
+
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"align-items:center;flex-wrap:wrap;gap:0.3rem'>"
+                    f"<div>"
+                    f"<span style='font-size:1rem;font-weight:700;color:{_border_clr}'>"
+                    f"🕐 {_heures}</span>"
+                    f"<span style='background:{_border_clr};color:white;font-size:0.68rem;"
+                    f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:8px'>"
+                    f"{_type_lbl}</span>"
+                    f"{_wt_span}"
+                    f"</div>"
+                    f"<span style='color:#64748B;font-size:0.82rem'>🏫 {_room_disp}</span>"
+                    f"</div>"
+
+                    f"<div style='margin-top:0.45rem'>"
+                    f"<span style='font-size:0.95rem;font-weight:600;color:#1E293B'>"
+                    f"📘 {_course}</span>"
+                    f"{_code_span}"
+                    f"</div>"
+
+                    f"<div style='margin-top:0.3rem;display:flex;gap:1.2rem;flex-wrap:wrap'>"
+                    f"<span style='color:#475569;font-size:0.82rem'>"
+                    f"👥 <b>{_classe}</b></span>"
+                    f"<span style='color:#475569;font-size:0.82rem'>"
+                    f"🎓 {_promo} {_annee}</span>"
+                    f"<span style='color:#475569;font-size:0.82rem'>"
+                    f"🏢 {_dept}</span>"
+                    f"<span style='color:#475569;font-size:0.82rem'>"
+                    f"🏛️ {_fac}</span>"
+                    f"</div>"
+
+                    f"{_valid_div}"
+                    f"</div>"
+                )
+                st.markdown(_html, unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -77,17 +249,18 @@ with tab_docs:
         st.info("Aucun cours trouvé dans vos horaires. Contactez l'administrateur.")
     else:
         with st.expander("➕ Ajouter un document"):
-            # Sélection en cascade : Faculté → Département → Promotion + Cours
+            # Sélection en cascade filtrée par les affectations du professeur
             col_f, col_d = st.columns(2)
             with col_f:
+                facs_doc = ProfessorExtQueries.get_faculties_for_prof(prof_id)
                 fac_sel = st.selectbox(
-                    "Faculté *", options=faculties,
+                    "Faculté *", options=facs_doc,
                     format_func=lambda f: f["name"],
                     index=None, placeholder="— Sélectionner —",
                     key="doc_fac"
                 )
             with col_d:
-                depts_doc = DepartmentQueries.get_by_faculty(fac_sel["id"]) if fac_sel else []
+                depts_doc = ProfessorExtQueries.get_departments_for_prof(prof_id, fac_sel["id"]) if fac_sel else []
                 dept_sel = st.selectbox(
                     "Département *", options=depts_doc,
                     format_func=lambda d: d["name"],
@@ -97,7 +270,7 @@ with tab_docs:
 
             col_p, col_c = st.columns(2)
             with col_p:
-                promos_doc = PromotionQueries.get_by_department(dept_sel["id"]) if dept_sel else []
+                promos_doc = ProfessorExtQueries.get_promotions_for_prof(prof_id, dept_sel["id"]) if dept_sel else []
                 promo_sel = st.selectbox(
                     "Promotion destinataire *", options=promos_doc,
                     format_func=lambda p: f"{p['name']} ({p.get('academic_year','')})",
@@ -105,7 +278,7 @@ with tab_docs:
                     key="doc_promo"
                 )
             with col_c:
-                courses_doc = CourseQueries.get_by_department(dept_sel["id"]) if dept_sel else []
+                courses_doc = ProfessorExtQueries.get_courses_for_prof(prof_id, promo_sel["id"]) if promo_sel else []
                 course_sel = st.selectbox(
                     "Cours *", options=courses_doc,
                     format_func=lambda c: f"{c['name']} ({c.get('code','—')})",
@@ -196,32 +369,68 @@ with tab_tp:
         if not classes or not courses:
             st.info("Vous devez avoir des classes assignées et des cours dans votre département.")
         else:
+            # ── Cascade filtrée par les affectations du professeur ────────────
+            facs_tp = ProfessorExtQueries.get_faculties_for_prof(prof_id)
+            fac_tp = st.selectbox(
+                "Faculté *", options=facs_tp,
+                format_func=lambda f: f["name"],
+                index=None, placeholder="— Sélectionner —",
+                key="tp_fac"
+            )
+            col_dt, col_pt = st.columns(2)
+            with col_dt:
+                depts_tp = ProfessorExtQueries.get_departments_for_prof(prof_id, fac_tp["id"]) if fac_tp else []
+                dept_tp = st.selectbox(
+                    "Département *", options=depts_tp,
+                    format_func=lambda d: d["name"],
+                    index=None, placeholder="— Sélectionner —",
+                    key="tp_dept"
+                )
+            with col_pt:
+                promos_tp = ProfessorExtQueries.get_promotions_for_prof(prof_id, dept_tp["id"]) if dept_tp else []
+                promo_tp = st.selectbox(
+                    "Promotion *", options=promos_tp,
+                    format_func=lambda p: f"{p['name']} ({p.get('academic_year','')})",
+                    index=None, placeholder="— Sélectionner —",
+                    key="tp_promo"
+                )
+            col_ct, col_clt = st.columns(2)
+            with col_ct:
+                courses_tp = ProfessorExtQueries.get_courses_for_prof(prof_id, promo_tp["id"]) if promo_tp else []
+                tp_course = st.selectbox(
+                    "Cours *", options=courses_tp,
+                    format_func=lambda c: c["name"],
+                    index=None, placeholder="— Sélectionner —",
+                    key="tp_course"
+                )
+            with col_clt:
+                classes_tp = [c for c in classes if c.get("promotion_id") == promo_tp["id"]] if promo_tp else []
+                tp_class = st.selectbox(
+                    "Classe *", options=classes_tp,
+                    format_func=lambda c: f"{c['name']} ({c.get('promotion_name','')})",
+                    index=None, placeholder="— Sélectionner —",
+                    key="tp_class"
+                )
+
+            # ── Formulaire (titre, dates, PDF) ────────────────────────────────
             with st.form("create_tp"):
-                tp_title   = st.text_input("Titre du TP *")
-                tp_desc    = st.text_area("Consignes (texte)")
-                tp_pdf     = st.file_uploader("Sujet PDF (optionnel)", type=["pdf"],
-                                              key="tp_subject_pdf")
-                tp_course  = st.selectbox(
-                    "Cours *", options=courses,
-                    format_func=lambda c: c["name"]
-                )
-                tp_class   = st.selectbox(
-                    "Classe *", options=classes,
-                    format_func=lambda c: f"{c['name']} ({c.get('promotion_name','')})"
-                )
-                tp_date    = st.date_input("Date limite *",
-                                           min_value=datetime.today())
-                tp_time    = st.time_input("Heure limite *")
-                tp_max_mb  = st.number_input("Taille max PDF soumission (Mo)",
-                                              min_value=1, max_value=50, value=10)
+                tp_title  = st.text_input("Titre du TP *")
+                tp_desc   = st.text_area("Consignes (texte)")
+                tp_pdf    = st.file_uploader("Sujet PDF (optionnel)", type=["pdf"],
+                                             key="tp_subject_pdf")
+                tp_date   = st.date_input("Date limite *", min_value=datetime.today())
+                tp_time   = st.time_input("Heure limite *")
+                tp_max_mb = st.number_input("Taille max PDF soumission (Mo)",
+                                            min_value=1, max_value=50, value=10)
 
                 if st.form_submit_button("Créer le TP", type="primary"):
-                    if not tp_title.strip():
+                    if not tp_course or not tp_class:
+                        st.error("Sélectionnez la faculté, le département, la promotion, le cours et la classe.")
+                    elif not tp_title.strip():
                         st.error("Le titre est obligatoire.")
                     else:
                         deadline = datetime.combine(tp_date, tp_time)
                         try:
-                            # Upload du sujet PDF si fourni
                             subj_url = subj_name = None
                             if tp_pdf:
                                 subj_url, _ = upload_pdf(
@@ -269,7 +478,58 @@ with tab_tp:
         if not tps:
             st.info("Aucun TP créé.")
         else:
-            for tp in tps:
+            def _unique_tp(lst, key_id, key_name):
+                seen, result = set(), []
+                for item in lst:
+                    if item.get(key_id) and item[key_id] not in seen:
+                        result.append({"id": item[key_id], "name": item[key_name]})
+                        seen.add(item[key_id])
+                return result
+
+            _tp_cf, _tp_cd, _tp_cp, _tp_cc = st.columns(4)
+            with _tp_cf:
+                _facs_tp_l = _unique_tp(tps, "faculty_id", "faculty_name")
+                _fac_tp_l = st.selectbox(
+                    "Faculté", options=_facs_tp_l,
+                    format_func=lambda f: f["name"],
+                    index=None, placeholder="— Toutes —",
+                    key="tpl_fac_sel"
+                )
+            _tps_f = [t for t in tps if not _fac_tp_l or t.get("faculty_id") == _fac_tp_l["id"]]
+
+            with _tp_cd:
+                _depts_tp_l = _unique_tp(_tps_f, "department_id", "department_name")
+                _dept_tp_l = st.selectbox(
+                    "Département", options=_depts_tp_l,
+                    format_func=lambda d: d["name"],
+                    index=None, placeholder="— Tous —",
+                    key="tpl_dept_sel"
+                )
+            _tps_f = [t for t in _tps_f if not _dept_tp_l or t.get("department_id") == _dept_tp_l["id"]]
+
+            with _tp_cp:
+                _promos_tp_l = _unique_tp(_tps_f, "promotion_id", "promotion_name")
+                _promo_tp_l = st.selectbox(
+                    "Promotion", options=_promos_tp_l,
+                    format_func=lambda p: p["name"],
+                    index=None, placeholder="— Toutes —",
+                    key="tpl_promo_sel"
+                )
+            _tps_f = [t for t in _tps_f if not _promo_tp_l or t.get("promotion_id") == _promo_tp_l["id"]]
+
+            with _tp_cc:
+                _courses_tp_l = _unique_tp(_tps_f, "course_id", "course_name")
+                _course_tp_l = st.selectbox(
+                    "Cours", options=_courses_tp_l,
+                    format_func=lambda c: c["name"],
+                    index=None, placeholder="— Tous —",
+                    key="tpl_course_sel"
+                )
+            _tps_f = [t for t in _tps_f if not _course_tp_l or t.get("course_id") == _course_tp_l["id"]]
+
+            if not _tps_f:
+                st.info("Aucun TP pour cette sélection.")
+            for tp in _tps_f:
                 deadline_dt = tp["deadline"]
                 if isinstance(deadline_dt, str):
                     deadline_dt = datetime.fromisoformat(deadline_dt)
@@ -371,34 +631,68 @@ with tab_notes:
     if not classes or not courses:
         st.info("Aucune classe ou cours trouvé dans vos horaires.")
     else:
+        # ── Cascade filtrée — ligne 1 : Faculté / Département / Promotion ────
+        col_nf, col_nd, col_np = st.columns(3)
+        with col_nf:
+            facs_n = ProfessorExtQueries.get_faculties_for_prof(prof_id)
+            fac_n = st.selectbox(
+                "Faculté", options=facs_n,
+                format_func=lambda f: f["name"],
+                index=None, placeholder="— Sélectionner —",
+                key="notes_fac"
+            )
+        with col_nd:
+            depts_n = ProfessorExtQueries.get_departments_for_prof(prof_id, fac_n["id"]) if fac_n else []
+            dept_n = st.selectbox(
+                "Département", options=depts_n,
+                format_func=lambda d: d["name"],
+                index=None, placeholder="— Sélectionner —",
+                key="notes_dept"
+            )
+        with col_np:
+            promos_n = ProfessorExtQueries.get_promotions_for_prof(prof_id, dept_n["id"]) if dept_n else []
+            promo_n = st.selectbox(
+                "Promotion", options=promos_n,
+                format_func=lambda p: f"{p['name']} ({p.get('academic_year','')})",
+                index=None, placeholder="— Sélectionner —",
+                key="notes_promo"
+            )
+
+        # ── Cascade filtrée — ligne 2 : Cours / Classe / Type / Session ──────
         col_sel1, col_sel2, col_sel3, col_sel4 = st.columns(4)
         with col_sel1:
+            courses_n = ProfessorExtQueries.get_courses_for_prof(prof_id, promo_n["id"]) if promo_n else []
             notes_course = st.selectbox(
-                "Cours", options=courses,
+                "Cours", options=courses_n,
                 format_func=lambda c: c["name"],
+                index=None, placeholder="— Sélectionner —",
                 key="notes_course_sel"
             )
         with col_sel2:
+            classes_n = [c for c in classes if c.get("promotion_id") == promo_n["id"]] if promo_n else []
             notes_class = st.selectbox(
-                "Salle", options=classes,
+                "Classe", options=classes_n,
                 format_func=lambda c: c["name"],
+                index=None, placeholder="— Sélectionner —",
                 key="notes_class_sel"
             )
         with col_sel3:
             exam_type = st.selectbox(
                 "Type d'épreuve",
-                ["Examen", "Contrôle Continu", "TP Noté", "Rattrapage"],
+                ["Examen", "Contrôle Continu", "TP Noté"],
                 key="notes_exam_type"
             )
         with col_sel4:
-            notes_session = st.text_input(
+            from db.queries import SESSION_NAMES as _SESS_NAMES, RATTRAPAGE_MAP as _RATT_MAP
+            notes_session = st.selectbox(
                 "Session",
-                value="Principale",
-                placeholder="ex: Janvier 2025",
+                options=_SESS_NAMES,
                 key="notes_session_name"
             )
 
         if notes_course and notes_class:
+            _is_rattrapage = notes_session in _RATT_MAP
+            _normale_session = _RATT_MAP.get(notes_session)
             try:
                 students = StudentQueries.get_by_class(notes_class["id"])
                 existing_grades = {
@@ -407,11 +701,33 @@ with tab_notes:
                         notes_course["id"], notes_class["id"]
                     ) or [])
                     if g.get("exam_type") == exam_type
-                    and g.get("session_name") == (notes_session.strip() or "Principale")
+                    and g.get("session_name") == notes_session
                 }
+                # Pour rattrapage : cours NVAL par étudiant depuis la session normale
+                _nval_set = set()
+                if _is_rattrapage and _normale_session:
+                    for _stu in (students or []):
+                        _nv = GradeQueries.get_nval_course_ids_by_student(
+                            _stu["id"], _normale_session)
+                        if notes_course["id"] in _nv:
+                            _nval_set.add(_stu["id"])
             except Exception as e:
                 st.error(str(e))
-                students = []; existing_grades = {}
+                students = []; existing_grades = {}; _nval_set = set()
+
+            # Filtrage NVAL pour rattrapage
+            if _is_rattrapage:
+                if len(_nval_set) > 0:
+                    students = [s for s in students if s["id"] in _nval_set]
+                    st.info(
+                        f"⚠️ Session de rattrapage — {len(students)} étudiant(s) NVAL "
+                        f"dans **{_normale_session}** pour ce cours."
+                    )
+                else:
+                    st.caption(
+                        f"ℹ️ Aucun étudiant NVAL trouvé dans {_normale_session} — "
+                        f"tous les étudiants affichés."
+                    )
 
             if not students:
                 st.info("Aucun étudiant enregistré dans cette salle.")
@@ -433,9 +749,10 @@ with tab_notes:
                     for stu in students:
                         _ex = existing_grades.get(stu["id"])
                         _default_g = float(_ex["grade"]) if _ex else 0.0
+                        _nval_icon = " ⚠️" if stu["id"] in _nval_set else ""
                         c_n, c_g, c_c = st.columns([3, 1, 2])
                         c_n.markdown(
-                            f"**{stu['full_name']}** "
+                            f"**{stu['full_name']}{_nval_icon}** "
                             f"<span style='color:#94A3B8;font-size:0.8rem'>"
                             f"({stu['student_number']})</span>",
                             unsafe_allow_html=True
@@ -462,7 +779,7 @@ with tab_notes:
                             st.error("Le motif est obligatoire pour modifier des notes existantes.")
                         else:
                             try:
-                                session_val = notes_session.strip() or "Principale"
+                                session_val = notes_session
                                 for stu_id, grade_val in note_inputs.items():
                                     GradeQueries.upsert(
                                         student_id=stu_id,
@@ -506,7 +823,7 @@ with tab_notes:
 
                 # ── Section 1b : Soumettre les notes au département ───────────
                 st.divider()
-                _submit_session_val = notes_session.strip() or "Principale"
+                _submit_session_val = notes_session
 
                 _STATUS_CLR_P = {
                     "brouillon": "#64748B",
@@ -711,7 +1028,7 @@ with tab_notes:
             import io as _io_notes
             import pandas as _pd_notes
 
-            _session_xl  = notes_session.strip() or "Principale"
+            _session_xl  = notes_session
             _students_xl = StudentQueries.get_by_class(notes_class["id"]) or []
             _fname_base  = (
                 f"notes_{notes_class['name'].replace(' ','_')}"
@@ -915,27 +1232,59 @@ with tab_classes:
     if not classes:
         st.info("Aucune classe assignée. L'administrateur doit d'abord créer des horaires vous incluant.")
     else:
-        for cls in classes:
-            with st.expander(
-                f"🏫 {cls['name']} — {cls.get('promotion_name','')} "
-                f"({cls.get('academic_year','')})"
-            ):
-                try:
-                    students = StudentQueries.get_by_class(cls["id"])
-                except Exception:
-                    students = []
+        # ── Cascade filtrée — Faculté / Département / Promotion ───────────────
+        _cl_cf, _cl_cd, _cl_cp = st.columns(3)
+        with _cl_cf:
+            _facs_cl = ProfessorExtQueries.get_faculties_for_prof(prof_id)
+            _fac_cl = st.selectbox(
+                "Faculté", options=_facs_cl,
+                format_func=lambda f: f["name"],
+                index=None, placeholder="— Toutes —",
+                key="cls_fac_sel"
+            )
+        with _cl_cd:
+            _depts_cl = ProfessorExtQueries.get_departments_for_prof(prof_id, _fac_cl["id"]) if _fac_cl else []
+            _dept_cl = st.selectbox(
+                "Département", options=_depts_cl,
+                format_func=lambda d: d["name"],
+                index=None, placeholder="— Tous —",
+                key="cls_dept_sel"
+            )
+        with _cl_cp:
+            _promos_cl = ProfessorExtQueries.get_promotions_for_prof(prof_id, _dept_cl["id"]) if _dept_cl else []
+            _promo_cl = st.selectbox(
+                "Promotion", options=_promos_cl,
+                format_func=lambda p: f"{p['name']} ({p.get('academic_year','')})",
+                index=None, placeholder="— Toutes —",
+                key="cls_promo_sel"
+            )
 
-                col_a, col_b = st.columns(2)
-                col_a.metric("Étudiants inscrits", len(students))
-                col_b.caption(f"Département : {cls.get('department_name','—')}")
+        _classes_cl = [c for c in classes if c.get("promotion_id") == _promo_cl["id"]] if _promo_cl else classes
 
-                if students:
-                    st.divider()
-                    for stu in students:
-                        st.caption(
-                            f"👤 {stu['full_name']} "
-                            f"({stu['student_number']})"
-                        )
+        if not _classes_cl:
+            st.info("Aucune classe pour cette sélection.")
+        else:
+            for cls in _classes_cl:
+                with st.expander(
+                    f"🏫 {cls['name']} — {cls.get('promotion_name','')} "
+                    f"({cls.get('academic_year','')})"
+                ):
+                    try:
+                        students = StudentQueries.get_by_class(cls["id"])
+                    except Exception:
+                        students = []
+
+                    col_a, col_b = st.columns(2)
+                    col_a.metric("Étudiants inscrits", len(students))
+                    col_b.caption(f"Département : {cls.get('department_name','—')}")
+
+                    if students:
+                        st.divider()
+                        for stu in students:
+                            st.caption(
+                                f"👤 {stu['full_name']} "
+                                f"({stu['student_number']})"
+                            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -948,11 +1297,41 @@ with tab_presence:
     if not classes:
         st.info("Aucune salle assignée.")
     else:
+        # ── Cascade filtrée — Faculté / Département / Promotion ───────────────
+        _pr_cf, _pr_cd, _pr_cp = st.columns(3)
+        with _pr_cf:
+            _facs_pr = ProfessorExtQueries.get_faculties_for_prof(prof_id)
+            _fac_pr = st.selectbox(
+                "Faculté *", options=_facs_pr,
+                format_func=lambda f: f["name"],
+                index=None, placeholder="— Sélectionner —",
+                key="pr_fac_sel"
+            )
+        with _pr_cd:
+            _depts_pr = ProfessorExtQueries.get_departments_for_prof(prof_id, _fac_pr["id"]) if _fac_pr else []
+            _dept_pr = st.selectbox(
+                "Département *", options=_depts_pr,
+                format_func=lambda d: d["name"],
+                index=None, placeholder="— Sélectionner —",
+                key="pr_dept_sel"
+            )
+        with _pr_cp:
+            _promos_pr = ProfessorExtQueries.get_promotions_for_prof(prof_id, _dept_pr["id"]) if _dept_pr else []
+            _promo_pr = st.selectbox(
+                "Promotion *", options=_promos_pr,
+                format_func=lambda p: f"{p['name']} ({p.get('academic_year','')})",
+                index=None, placeholder="— Sélectionner —",
+                key="pr_promo_sel"
+            )
+
+        # ── Classe (filtrée par promotion) + Créneau ──────────────────────────
         _pr_col1, _pr_col2 = st.columns(2)
         with _pr_col1:
+            _classes_pr = [c for c in classes if c.get("promotion_id") == _promo_pr["id"]] if _promo_pr else []
             _pr_class = st.selectbox(
-                "Salle *", options=classes,
+                "Classe *", options=_classes_pr,
                 format_func=lambda c: f"{c['name']} ({c.get('promotion_name','')})",
+                index=None, placeholder="— Sélectionner —",
                 key="pr_class_sel"
             )
         with _pr_col2:
@@ -1042,16 +1421,49 @@ with tab_messages:
         st.info("Aucune salle assignée.")
     else:
         with st.expander("✉️ Nouveau message"):
-            with st.form("new_message"):
-                _msg_class = st.selectbox(
-                    "Salle destinataire *", options=classes,
-                    format_func=lambda c: f"{c['name']} ({c.get('promotion_name','')})",
+            # ── Cascade filtrée — Faculté / Département / Promotion / Classe ──
+            _mg_cf, _mg_cd, _mg_cp = st.columns(3)
+            with _mg_cf:
+                _facs_mg = ProfessorExtQueries.get_faculties_for_prof(prof_id)
+                _fac_mg = st.selectbox(
+                    "Faculté *", options=_facs_mg,
+                    format_func=lambda f: f["name"],
+                    index=None, placeholder="— Sélectionner —",
+                    key="msg_fac_sel"
                 )
-                _msg_subj  = st.text_input("Objet *")
-                _msg_body  = st.text_area("Message *", height=150)
-                _msg_urg   = st.checkbox("🚨 Message urgent")
+            with _mg_cd:
+                _depts_mg = ProfessorExtQueries.get_departments_for_prof(prof_id, _fac_mg["id"]) if _fac_mg else []
+                _dept_mg = st.selectbox(
+                    "Département *", options=_depts_mg,
+                    format_func=lambda d: d["name"],
+                    index=None, placeholder="— Sélectionner —",
+                    key="msg_dept_sel"
+                )
+            with _mg_cp:
+                _promos_mg = ProfessorExtQueries.get_promotions_for_prof(prof_id, _dept_mg["id"]) if _dept_mg else []
+                _promo_mg = st.selectbox(
+                    "Promotion *", options=_promos_mg,
+                    format_func=lambda p: f"{p['name']} ({p.get('academic_year','')})",
+                    index=None, placeholder="— Sélectionner —",
+                    key="msg_promo_sel"
+                )
+            _classes_mg = [c for c in classes if c.get("promotion_id") == _promo_mg["id"]] if _promo_mg else []
+            _msg_class = st.selectbox(
+                "Classe destinataire *", options=_classes_mg,
+                format_func=lambda c: f"{c['name']} ({c.get('promotion_name','')})",
+                index=None, placeholder="— Sélectionner —",
+                key="msg_class_sel"
+            )
+
+            # ── Formulaire (contenu du message) ───────────────────────────────
+            with st.form("new_message"):
+                _msg_subj = st.text_input("Objet *")
+                _msg_body = st.text_area("Message *", height=150)
+                _msg_urg  = st.checkbox("🚨 Message urgent")
                 if st.form_submit_button("Envoyer", type="primary"):
-                    if _msg_subj.strip() and _msg_body.strip():
+                    if not _msg_class:
+                        st.error("Sélectionnez une classe destinataire.")
+                    elif _msg_subj.strip() and _msg_body.strip():
                         try:
                             ClassMessageQueries.create(
                                 prof_id, _msg_class["id"],
@@ -1101,9 +1513,49 @@ with tab_claims:
     if not _claims:
         st.success("✅ Aucune réclamation en attente.")
     else:
-        st.metric("Réclamations en attente", len(_claims))
+        # ── Cascade filtrée — dérivée des réclamations chargées ───────────────
+        def _unique(lst, key_id, key_name):
+            seen, result = set(), []
+            for item in lst:
+                if item.get(key_id) and item[key_id] not in seen:
+                    result.append({"id": item[key_id], "name": item[key_name]})
+                    seen.add(item[key_id])
+            return result
+
+        _rc_cf, _rc_cd, _rc_cc = st.columns(3)
+        with _rc_cf:
+            _facs_rc = _unique(_claims, "faculty_id", "faculty_name")
+            _fac_rc = st.selectbox(
+                "Faculté", options=_facs_rc,
+                format_func=lambda f: f["name"],
+                index=None, placeholder="— Toutes —",
+                key="rc_fac_sel"
+            )
+        _claims_f = [c for c in _claims if not _fac_rc or c.get("faculty_id") == _fac_rc["id"]]
+
+        with _rc_cd:
+            _depts_rc = _unique(_claims_f, "department_id", "department_name")
+            _dept_rc = st.selectbox(
+                "Département", options=_depts_rc,
+                format_func=lambda d: d["name"],
+                index=None, placeholder="— Tous —",
+                key="rc_dept_sel"
+            )
+        _claims_f = [c for c in _claims_f if not _dept_rc or c.get("department_id") == _dept_rc["id"]]
+
+        with _rc_cc:
+            _courses_rc = _unique(_claims_f, "course_id", "course_name")
+            _course_rc = st.selectbox(
+                "Cours", options=_courses_rc,
+                format_func=lambda c: c["name"],
+                index=None, placeholder="— Tous —",
+                key="rc_course_sel"
+            )
+        _claims_f = [c for c in _claims_f if not _course_rc or c.get("course_id") == _course_rc["id"]]
+
+        st.metric("Réclamations en attente", len(_claims_f))
         st.divider()
-        for _cl in _claims:
+        for _cl in _claims_f:
             with st.expander(
                 f"⚠️ {_cl['student_name']} — {_cl['course_name']} "
                 f"· {_cl['exam_type']} · {_cl['session_name']}"

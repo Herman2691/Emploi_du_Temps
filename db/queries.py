@@ -1,6 +1,19 @@
 # db/queries.py
 from db.connection import execute_query
 
+# Noms de session standardisés LMD
+SESSION_NAMES = [
+    "S1 - Session Normale",
+    "S1 - Session de Rattrapage",
+    "S2 - Session Normale",
+    "S2 - Session de Rattrapage",
+]
+# Rattrapage → Session normale correspondante
+RATTRAPAGE_MAP = {
+    "S1 - Session de Rattrapage": "S1 - Session Normale",
+    "S2 - Session de Rattrapage": "S2 - Session Normale",
+}
+
 
 # ============================================================
 # UNIVERSITÉS
@@ -264,25 +277,70 @@ class ClassQueries:
 class ProfessorQueries:
 
     @staticmethod
-    def get_by_department(department_id):
-        return execute_query(
-            "SELECT * FROM professors WHERE department_id=%s AND is_active=TRUE ORDER BY name",
-            (department_id,)
-        )
-
-    @staticmethod
     def get_by_university(university_id):
-        """Tous les professeurs d'une université (un prof peut enseigner dans plusieurs depts)."""
+        """Tous les profs du pool universitaire avec affiliations faculté + info compte."""
         return execute_query("""
-            SELECT DISTINCT p.*,
-                   d.name AS department_name,
-                   f.name AS faculty_name
+            SELECT p.*,
+                   STRING_AGG(f.name || ' (' || pfa.status || ')', ', '
+                              ORDER BY pfa.status, f.name) AS affiliations,
+                   u.id        AS user_id,
+                   u.email     AS account_email,
+                   u.is_active AS account_active
             FROM professors p
-            JOIN departments d ON p.department_id = d.id
-            JOIN faculties   f ON d.faculty_id    = f.id
-            WHERE f.university_id = %s AND p.is_active = TRUE
+            LEFT JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            LEFT JOIN faculties f ON f.id = pfa.faculty_id
+            LEFT JOIN users u ON u.professor_id = p.id AND u.role = 'professeur'
+            WHERE p.university_id = %s
+            GROUP BY p.id, u.id, u.email, u.is_active
             ORDER BY p.name
         """, (university_id,))
+
+    @staticmethod
+    def get_unaffiliated(university_id, faculty_id):
+        """Profs de l'université pas encore affiliés à cette faculté (pool disponible)."""
+        return execute_query("""
+            SELECT p.*
+            FROM professors p
+            WHERE p.university_id = %s AND p.is_active = TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM professor_faculty_affiliations pfa
+                WHERE pfa.professor_id = p.id AND pfa.faculty_id = %s
+              )
+            ORDER BY p.name
+        """, (university_id, faculty_id))
+
+    @staticmethod
+    def get_by_faculty(faculty_id):
+        """Profs affiliés à une faculté (permanent + visiteur) avec info compte."""
+        return execute_query("""
+            SELECT p.*,
+                   pfa.status    AS affiliation_status,
+                   u.id          AS user_id,
+                   u.email       AS account_email,
+                   u.is_active   AS account_active
+            FROM professors p
+            JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            LEFT JOIN users u ON u.professor_id = p.id AND u.role = 'professeur'
+            WHERE pfa.faculty_id = %s AND p.is_active = TRUE
+            ORDER BY pfa.status, p.name
+        """, (faculty_id,))
+
+    @staticmethod
+    def get_by_department(department_id):
+        """Profs affiliés à la faculté de ce département (pour l'admin département)."""
+        return execute_query("""
+            SELECT DISTINCT p.*,
+                   pfa.status AS affiliation_status,
+                   u.id       AS user_id,
+                   u.email    AS account_email,
+                   u.is_active AS account_active
+            FROM professors p
+            JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            JOIN departments d ON d.faculty_id = pfa.faculty_id
+            LEFT JOIN users u ON u.professor_id = p.id AND u.role = 'professeur'
+            WHERE d.id = %s AND p.is_active = TRUE
+            ORDER BY p.name
+        """, (department_id,))
 
     @staticmethod
     def get_by_id(professor_id):
@@ -292,17 +350,17 @@ class ProfessorQueries:
         )
 
     @staticmethod
-    def create(name, email, phone, department_id, statut="Contractuel"):
+    def create(name, email, phone, university_id, statut="Contractuel"):
         return execute_query(
-            "INSERT INTO professors (name,email,phone,department_id,statut) "
-            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
-            (name, email or None, phone or None, department_id, statut), fetch="one"
+            "INSERT INTO professors (name, email, phone, university_id, statut) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (name, email or None, phone or None, university_id, statut), fetch="one"
         )
 
     @staticmethod
     def update(professor_id, name, email, phone, statut="Contractuel"):
         execute_query(
-            "UPDATE professors SET name=%s,email=%s,phone=%s,statut=%s WHERE id=%s",
+            "UPDATE professors SET name=%s, email=%s, phone=%s, statut=%s WHERE id=%s",
             (name, email or None, phone or None, statut, professor_id), fetch="none"
         )
 
@@ -318,6 +376,56 @@ class ProfessorQueries:
 
 
 # ============================================================
+# AFFILIATIONS PROFESSEUR ↔ FACULTÉ
+# ============================================================
+class ProfessorFacultyAffiliationQueries:
+
+    @staticmethod
+    def create(professor_id, faculty_id, status="permanent"):
+        return execute_query("""
+            INSERT INTO professor_faculty_affiliations (professor_id, faculty_id, status)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (professor_id, faculty_id) DO UPDATE SET status = EXCLUDED.status
+            RETURNING id
+        """, (professor_id, faculty_id, status), fetch="one")
+
+    @staticmethod
+    def get_by_faculty(faculty_id):
+        return execute_query("""
+            SELECT pfa.*, p.name AS professor_name, p.email, p.phone, p.statut
+            FROM professor_faculty_affiliations pfa
+            JOIN professors p ON p.id = pfa.professor_id
+            WHERE pfa.faculty_id = %s AND p.is_active = TRUE
+            ORDER BY pfa.status, p.name
+        """, (faculty_id,))
+
+    @staticmethod
+    def get_by_professor(professor_id):
+        return execute_query("""
+            SELECT pfa.*, f.name AS faculty_name
+            FROM professor_faculty_affiliations pfa
+            JOIN faculties f ON f.id = pfa.faculty_id
+            WHERE pfa.professor_id = %s
+            ORDER BY pfa.status, f.name
+        """, (professor_id,))
+
+    @staticmethod
+    def update_status(professor_id, faculty_id, status):
+        execute_query("""
+            UPDATE professor_faculty_affiliations
+            SET status = %s
+            WHERE professor_id = %s AND faculty_id = %s
+        """, (status, professor_id, faculty_id), fetch="none")
+
+    @staticmethod
+    def remove(professor_id, faculty_id):
+        execute_query("""
+            DELETE FROM professor_faculty_affiliations
+            WHERE professor_id = %s AND faculty_id = %s
+        """, (professor_id, faculty_id), fetch="none")
+
+
+# ============================================================
 # COURS
 # ============================================================
 class CourseQueries:
@@ -329,43 +437,115 @@ class CourseQueries:
                    ue.name        AS ue_name,
                    ue.code        AS ue_code,
                    ue.group_label AS ue_group,
-                   ue.credits     AS ue_credits
+                   ue.credits     AS ue_credits,
+                   p.name         AS professor_name,
+                   pr.name        AS promotion_name
             FROM courses c
-            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
+            LEFT JOIN unites_enseignement ue ON c.ue_id       = ue.id
+            LEFT JOIN professors          p  ON c.professor_id = p.id
+            LEFT JOIN promotions          pr ON c.promotion_id = pr.id
             WHERE c.department_id=%s AND c.is_active=TRUE
-            ORDER BY ue.group_label NULLS LAST, ue.name NULLS LAST, c.name
+            ORDER BY pr.name NULLS LAST, ue.group_label NULLS LAST,
+                     ue.name NULLS LAST, c.name
         """, (department_id,))
+
+    @staticmethod
+    def get_by_promotion(promotion_id):
+        """Cours spécifiques à la promotion + cours partagés (sans promotion)."""
+        return execute_query("""
+            SELECT c.*,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.group_label AS ue_group,
+                   ue.credits     AS ue_credits,
+                   p.name         AS professor_name
+            FROM courses c
+            LEFT JOIN unites_enseignement ue ON c.ue_id       = ue.id
+            LEFT JOIN professors          p  ON c.professor_id = p.id
+            WHERE (c.promotion_id = %s OR c.promotion_id IS NULL)
+              AND c.is_active = TRUE
+            ORDER BY ue.group_label NULLS LAST, ue.name NULLS LAST, c.name
+        """, (promotion_id,))
 
     @staticmethod
     def get_by_class(class_id):
         """
-        Cours d'une classe : d'abord via les horaires, puis
-        tous les cours du département si aucun horaire encore planifié.
+        Cours d'une classe : via les horaires en priorité, puis
+        via la promotion de la classe, puis via le département.
         """
         courses = execute_query("""
             SELECT DISTINCT c.*,
                    ue.name AS ue_name, ue.code AS ue_code,
-                   ue.group_label AS ue_group
+                   ue.group_label AS ue_group,
+                   p.name AS professor_name
             FROM courses c
-            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
+            LEFT JOIN unites_enseignement ue ON c.ue_id       = ue.id
+            LEFT JOIN professors          p  ON c.professor_id = p.id
             JOIN schedules s ON s.course_id=c.id
             WHERE s.class_id=%s AND s.is_active=TRUE AND c.is_active=TRUE
             ORDER BY c.name
         """, (class_id,))
         if not courses:
+            # Fallback 1 : cours de la promotion
             courses = execute_query("""
                 SELECT c.*,
                        ue.name AS ue_name, ue.code AS ue_code,
-                       ue.group_label AS ue_group
+                       ue.group_label AS ue_group,
+                       p.name AS professor_name
                 FROM courses c
-                LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
-                JOIN departments d  ON c.department_id=d.id
-                JOIN promotions pr  ON pr.department_id=d.id
-                JOIN classes cl     ON cl.promotion_id=pr.id
+                LEFT JOIN unites_enseignement ue ON c.ue_id       = ue.id
+                LEFT JOIN professors          p  ON c.professor_id = p.id
+                JOIN classes cl ON cl.id = %s
+                WHERE c.promotion_id = cl.promotion_id AND c.is_active=TRUE
+                ORDER BY c.name
+            """, (class_id,))
+        if not courses:
+            # Fallback 2 : tous les cours du département
+            courses = execute_query("""
+                SELECT c.*,
+                       ue.name AS ue_name, ue.code AS ue_code,
+                       ue.group_label AS ue_group,
+                       p.name AS professor_name
+                FROM courses c
+                LEFT JOIN unites_enseignement ue ON c.ue_id       = ue.id
+                LEFT JOIN professors          p  ON c.professor_id = p.id
+                JOIN departments d ON c.department_id=d.id
+                JOIN promotions pr ON pr.department_id=d.id
+                JOIN classes cl    ON cl.promotion_id=pr.id
                 WHERE cl.id=%s AND c.is_active=TRUE
                 ORDER BY c.name
             """, (class_id,))
         return courses or []
+
+    @staticmethod
+    def generate_code(department_id, name=""):
+        """Génère le prochain code unique : initiales du nom + séquence (ex: MAT001)."""
+        import re as _re
+        words = [w for w in _re.sub(r'[^a-zA-ZÀ-ɏ]', ' ',
+                                     name).upper().split() if len(w) > 1]
+        if len(words) >= 2:
+            prefix = "".join(w[0] for w in words[:3])
+        elif words:
+            prefix = words[0][:3]
+        else:
+            prefix = "EC"
+        prefix = prefix[:3].upper()
+
+        seq = execute_query(
+            "SELECT COUNT(*) AS n FROM courses WHERE department_id=%s",
+            (department_id,), fetch="one"
+        )
+        seq_n = (seq["n"] if seq else 0) + 1
+
+        for _ in range(200):
+            candidate = f"{prefix}{seq_n:03d}"
+            taken = execute_query(
+                "SELECT id FROM courses WHERE code=%s", (candidate,), fetch="one"
+            )
+            if not taken:
+                return candidate
+            seq_n += 1
+        return f"{prefix}{seq_n:03d}"
 
     @staticmethod
     def get_by_id(course_id):
@@ -375,23 +555,131 @@ class CourseQueries:
         )
 
     @staticmethod
-    def create(name, code, hours, weight, department_id):
+    def create(name, code, hours, weight, department_id,
+               promotion_id=None, professor_id=None):
         return execute_query(
-            "INSERT INTO courses (name,code,hours,weight,department_id) VALUES (%s,%s,%s,%s,%s) RETURNING id",
-            (name, code or None, hours, weight, department_id), fetch="one"
+            """INSERT INTO courses
+               (name,code,hours,weight,department_id,promotion_id,professor_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (name, code or None, hours, weight, department_id,
+             promotion_id, professor_id), fetch="one"
         )
 
     @staticmethod
-    def update(course_id, name, code, hours, weight):
+    def update(course_id, name, code, hours, weight,
+               promotion_id=None, professor_id=None):
         execute_query(
-            "UPDATE courses SET name=%s,code=%s,hours=%s,weight=%s WHERE id=%s",
-            (name, code or None, hours, weight, course_id), fetch="none"
+            """UPDATE courses SET name=%s,code=%s,hours=%s,weight=%s,
+               promotion_id=%s,professor_id=%s WHERE id=%s""",
+            (name, code or None, hours, weight,
+             promotion_id, professor_id, course_id), fetch="none"
         )
 
     @staticmethod
     def delete(course_id):
         execute_query("UPDATE courses SET is_active=FALSE WHERE id=%s",
                       (course_id,), fetch="none")
+
+
+# ============================================================
+# SALLES PHYSIQUES
+# ============================================================
+class RoomQueries:
+
+    TYPES = ["salle", "amphi", "labo", "salle_tp", "salle_info", "autre"]
+    TYPE_LABELS = {
+        "salle":      "Salle de cours",
+        "amphi":      "Amphithéâtre",
+        "labo":       "Laboratoire",
+        "salle_tp":   "Salle TP",
+        "salle_info": "Salle informatique",
+        "autre":      "Autre",
+    }
+
+    @staticmethod
+    def get_by_university(university_id):
+        return execute_query("""
+            SELECT r.*,
+                   d.name AS department_name
+            FROM rooms r
+            LEFT JOIN departments d ON r.department_id = d.id
+            WHERE r.university_id = %s AND r.is_active = TRUE
+            ORDER BY r.building NULLS LAST, r.floor NULLS LAST, r.name
+        """, (university_id,))
+
+    @staticmethod
+    def get_by_department(department_id):
+        return execute_query("""
+            SELECT r.*,
+                   d.name AS department_name
+            FROM rooms r
+            LEFT JOIN departments d ON r.department_id = d.id
+            JOIN departments dep ON dep.id = %s
+            JOIN faculties   fac ON fac.id = dep.faculty_id
+            WHERE r.university_id = fac.university_id AND r.is_active = TRUE
+            ORDER BY r.building NULLS LAST, r.floor NULLS LAST, r.name
+        """, (department_id,))
+
+    @staticmethod
+    def get_by_id(room_id):
+        return execute_query(
+            "SELECT * FROM rooms WHERE id = %s",
+            (room_id,), fetch="one"
+        )
+
+    @staticmethod
+    def create(name, code, capacity, room_type, building, floor,
+               university_id, department_id=None):
+        return execute_query("""
+            INSERT INTO rooms
+                (name, code, capacity, room_type, building, floor,
+                 university_id, department_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+        """, (name, code or None, capacity or 0, room_type or "salle",
+              building or None, floor or None,
+              university_id, department_id), fetch="one")
+
+    @staticmethod
+    def update(room_id, name, code, capacity, room_type, building, floor,
+               department_id=None):
+        execute_query("""
+            UPDATE rooms
+            SET name=%s, code=%s, capacity=%s, room_type=%s,
+                building=%s, floor=%s, department_id=%s
+            WHERE id=%s
+        """, (name, code or None, capacity or 0, room_type or "salle",
+              building or None, floor or None,
+              department_id, room_id), fetch="none")
+
+    @staticmethod
+    def delete(room_id):
+        execute_query(
+            "UPDATE rooms SET is_active=FALSE WHERE id=%s",
+            (room_id,), fetch="none"
+        )
+
+    @staticmethod
+    def check_availability(room_id, day, start_time, end_time,
+                           exclude_schedule_id=None):
+        """Retourne la liste des conflits pour cette salle sur ce créneau."""
+        sql = """
+            SELECT s.id, s.day, s.start_time, s.end_time,
+                   c.name AS course_name,
+                   cl.name AS class_name
+            FROM schedules s
+            LEFT JOIN courses c  ON s.course_id = c.id
+            LEFT JOIN classes cl ON s.class_id  = cl.id
+            WHERE s.room_id    = %s
+              AND s.day        = %s
+              AND s.is_active  = TRUE
+              AND s.start_time < %s
+              AND s.end_time   > %s
+        """
+        params = [room_id, day, end_time, start_time]
+        if exclude_schedule_id:
+            sql += " AND s.id != %s"
+            params.append(exclude_schedule_id)
+        return execute_query(sql, params)
 
 
 # ============================================================
@@ -407,11 +695,15 @@ class ScheduleQueries:
                    c.code AS course_code,
                    COALESCE(p.name, '')                          AS professor_name,
                    cl.name AS class_name,
-                   sp.name                                       AS substitute_name
+                   sp.name                                       AS substitute_name,
+                   r.name  AS room_name,
+                   r.code  AS room_code,
+                   r.capacity AS room_capacity
             FROM schedules s
             LEFT JOIN courses    c  ON s.course_id=c.id
             LEFT JOIN professors p  ON s.professor_id=p.id
             LEFT JOIN professors sp ON s.substitute_professor_id=sp.id
+            LEFT JOIN rooms      r  ON s.room_id=r.id
             JOIN      classes    cl ON s.class_id=cl.id
             WHERE s.class_id=%s AND s.is_active=TRUE
             ORDER BY
@@ -421,6 +713,41 @@ class ScheduleQueries:
                     WHEN 'Vendredi' THEN 5 WHEN 'Samedi'  THEN 6
                 END, s.start_time
         """, (class_id,))
+
+    @staticmethod
+    def get_by_professor(professor_id):
+        """Tous les créneaux du professeur avec cours, classe, promotion, dept, faculté, salle."""
+        return execute_query("""
+            SELECT s.*,
+                   COALESCE(c.name, s.slot_label, 'Événement') AS course_name,
+                   c.code          AS course_code,
+                   cl.name         AS class_name,
+                   pr.name         AS promotion_name,
+                   pr.academic_year,
+                   d.name          AS department_name,
+                   f.name          AS faculty_name,
+                   COALESCE(r.name, s.room) AS room_name,
+                   r.code          AS room_code,
+                   r.capacity      AS room_capacity
+            FROM schedules s
+            LEFT JOIN courses    c  ON s.course_id    = c.id
+            JOIN      classes    cl ON s.class_id     = cl.id
+            JOIN      promotions pr ON cl.promotion_id = pr.id
+            JOIN      departments d ON pr.department_id = d.id
+            JOIN      faculties   f ON d.faculty_id    = f.id
+            LEFT JOIN rooms       r ON s.room_id       = r.id
+            WHERE s.professor_id = %s
+              AND s.is_active = TRUE
+              AND (s.valid_from  IS NULL OR s.valid_from  <= CURRENT_DATE)
+              AND (s.valid_until IS NULL OR s.valid_until >= CURRENT_DATE)
+            ORDER BY
+                CASE s.day
+                    WHEN 'Lundi'    THEN 1 WHEN 'Mardi'    THEN 2
+                    WHEN 'Mercredi' THEN 3 WHEN 'Jeudi'    THEN 4
+                    WHEN 'Vendredi' THEN 5 WHEN 'Samedi'   THEN 6
+                END,
+                s.start_time
+        """, (professor_id,))
 
     @staticmethod
     def check_conflict(class_id, day, start_time, end_time, exclude_id=None):
@@ -438,30 +765,31 @@ class ScheduleQueries:
     @staticmethod
     def create(class_id, day, start_time, end_time, room, course_id, professor_id,
                week_type="Toutes", valid_from=None, valid_until=None,
-               slot_type="cours", slot_label=None):
+               slot_type="cours", slot_label=None, room_id=None):
         return execute_query("""
             INSERT INTO schedules
                 (class_id,day,start_time,end_time,room,course_id,professor_id,
-                 week_type,valid_from,valid_until,slot_type,slot_label)
-            VALUES (%s,%s,%s::time,%s::time,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                 week_type,valid_from,valid_until,slot_type,slot_label,room_id)
+            VALUES (%s,%s,%s::time,%s::time,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
         """, (class_id, day, start_time, end_time, room or None,
               course_id or None, professor_id or None, week_type,
               valid_from or None, valid_until or None,
-              slot_type or "cours", slot_label or None), fetch="one")
+              slot_type or "cours", slot_label or None, room_id), fetch="one")
 
     @staticmethod
     def update(schedule_id, day, start_time, end_time, room, course_id, professor_id,
                week_type, valid_from=None, valid_until=None,
-               slot_type="cours", slot_label=None):
+               slot_type="cours", slot_label=None, room_id=None):
         execute_query("""
             UPDATE schedules SET day=%s,start_time=%s::time,end_time=%s::time,
             room=%s,course_id=%s,professor_id=%s,week_type=%s,
-            valid_from=%s,valid_until=%s,slot_type=%s,slot_label=%s WHERE id=%s
+            valid_from=%s,valid_until=%s,slot_type=%s,slot_label=%s,room_id=%s
+            WHERE id=%s
         """, (day, start_time, end_time, room or None,
               course_id or None, professor_id or None, week_type,
               valid_from or None, valid_until or None,
               slot_type or "cours", slot_label or None,
-              schedule_id), fetch="none")
+              room_id, schedule_id), fetch="none")
 
     @staticmethod
     def delete(schedule_id):
@@ -728,15 +1056,18 @@ class ProfessorExtQueries:
 
     @staticmethod
     def get_with_account(department_id):
-        """Professeurs avec info sur leur compte de connexion."""
+        """Professeurs affiliés à la faculté de ce département, avec info compte."""
         return execute_query("""
-            SELECT p.*,
+            SELECT DISTINCT p.*,
+                   pfa.status  AS affiliation_status,
                    u.id        AS user_id,
                    u.email     AS account_email,
                    u.is_active AS account_active
             FROM professors p
+            JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            JOIN departments d ON d.faculty_id = pfa.faculty_id
             LEFT JOIN users u ON u.professor_id = p.id AND u.role = 'professeur'
-            WHERE p.department_id = %s AND p.is_active = TRUE
+            WHERE d.id = %s AND p.is_active = TRUE
             ORDER BY p.name
         """, (department_id,))
 
@@ -758,14 +1089,24 @@ class ProfessorExtQueries:
 
     @staticmethod
     def get_courses(professor_id):
-        """Cours enseignés par ce prof (via les horaires)."""
+        """Cours enseignés par ce prof (via professor_id direct ou via les horaires)."""
         return execute_query("""
-            SELECT DISTINCT c.*
+            SELECT DISTINCT c.*,
+                   pr.name AS promotion_name,
+                   ue.name AS ue_name, ue.code AS ue_code
             FROM courses c
-            JOIN schedules s ON s.course_id = c.id
-            WHERE s.professor_id = %s AND s.is_active = TRUE AND c.is_active = TRUE
-            ORDER BY c.name
-        """, (professor_id,))
+            LEFT JOIN promotions pr ON c.promotion_id = pr.id
+            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
+            WHERE c.is_active = TRUE
+              AND (
+                c.professor_id = %s
+                OR c.id IN (
+                    SELECT course_id FROM schedules
+                    WHERE professor_id = %s AND is_active = TRUE
+                )
+              )
+            ORDER BY pr.name NULLS LAST, c.name
+        """, (professor_id, professor_id))
 
     @staticmethod
     def get_promotions(professor_id):
@@ -786,6 +1127,96 @@ class ProfessorExtQueries:
             "SELECT * FROM courses WHERE department_id=%s AND is_active=TRUE ORDER BY name",
             (department_id,)
         )
+
+    @staticmethod
+    def get_faculties_for_prof(professor_id):
+        """Facultés où ce professeur enseigne (via horaires ou affectation directe)."""
+        return execute_query("""
+            SELECT DISTINCT f.id, f.name
+            FROM faculties f
+            WHERE f.is_active = TRUE
+              AND (
+                EXISTS (
+                    SELECT 1 FROM departments d
+                    JOIN promotions pr ON pr.department_id = d.id
+                    JOIN classes cl ON cl.promotion_id = pr.id
+                    JOIN schedules s ON s.class_id = cl.id
+                    WHERE d.faculty_id = f.id
+                      AND s.professor_id = %s AND s.is_active = TRUE
+                )
+                OR EXISTS (
+                    SELECT 1 FROM departments d
+                    JOIN courses c ON c.department_id = d.id
+                    WHERE d.faculty_id = f.id
+                      AND c.professor_id = %s AND c.is_active = TRUE
+                )
+              )
+            ORDER BY f.name
+        """, (professor_id, professor_id))
+
+    @staticmethod
+    def get_departments_for_prof(professor_id, faculty_id):
+        """Départements d'une faculté où ce professeur enseigne."""
+        return execute_query("""
+            SELECT DISTINCT d.id, d.name
+            FROM departments d
+            WHERE d.faculty_id = %s
+              AND (
+                EXISTS (
+                    SELECT 1 FROM promotions pr
+                    JOIN classes cl ON cl.promotion_id = pr.id
+                    JOIN schedules s ON s.class_id = cl.id
+                    WHERE pr.department_id = d.id
+                      AND s.professor_id = %s AND s.is_active = TRUE
+                )
+                OR EXISTS (
+                    SELECT 1 FROM courses c
+                    WHERE c.department_id = d.id
+                      AND c.professor_id = %s AND c.is_active = TRUE
+                )
+              )
+            ORDER BY d.name
+        """, (faculty_id, professor_id, professor_id))
+
+    @staticmethod
+    def get_promotions_for_prof(professor_id, department_id):
+        """Promotions d'un département où ce professeur enseigne."""
+        return execute_query("""
+            SELECT DISTINCT pr.id, pr.name, pr.academic_year
+            FROM promotions pr
+            WHERE pr.department_id = %s AND pr.is_active = TRUE
+              AND (
+                EXISTS (
+                    SELECT 1 FROM classes cl
+                    JOIN schedules s ON s.class_id = cl.id
+                    WHERE cl.promotion_id = pr.id
+                      AND s.professor_id = %s AND s.is_active = TRUE
+                )
+                OR EXISTS (
+                    SELECT 1 FROM courses c
+                    WHERE c.promotion_id = pr.id
+                      AND c.professor_id = %s AND c.is_active = TRUE
+                )
+              )
+            ORDER BY pr.name
+        """, (department_id, professor_id, professor_id))
+
+    @staticmethod
+    def get_courses_for_prof(professor_id, promotion_id):
+        """Cours enseignés par ce professeur dans une promotion donnée."""
+        return execute_query("""
+            SELECT DISTINCT c.id, c.name, c.code
+            FROM courses c
+            WHERE c.promotion_id = %s AND c.is_active = TRUE
+              AND (
+                c.professor_id = %s
+                OR c.id IN (
+                    SELECT course_id FROM schedules
+                    WHERE professor_id = %s AND is_active = TRUE
+                )
+              )
+            ORDER BY c.name
+        """, (promotion_id, professor_id, professor_id))
 
 
 # ============================================================
@@ -818,6 +1249,136 @@ class StudentRegistryQueries:
                      o.name NULLS LAST,
                      r.full_name
         """, (university_id,))
+
+    @staticmethod
+    def get_stats(university_id):
+        """Statistiques légères sans charger tous les enregistrements."""
+        return execute_query("""
+            SELECT
+                COUNT(*)                              AS total,
+                COUNT(s.id)                           AS registered,
+                COUNT(*) - COUNT(s.id)                AS pending
+            FROM student_registry r
+            LEFT JOIN students s ON s.registry_id = r.id
+            WHERE r.university_id = %s
+        """, (university_id,), fetch="one")
+
+    @staticmethod
+    def _build_filter_clause(annee=None, filiere_id=None, option_id=None,
+                             promotion_id=None, search=None, compte_filter=None):
+        """Construit WHERE + params pour les filtres courants."""
+        clauses, params = [], []
+        if annee:
+            clauses.append("r.annee_academique = %s"); params.append(annee)
+        if filiere_id:
+            clauses.append("r.filiere_id = %s"); params.append(filiere_id)
+        if option_id:
+            clauses.append("r.option_id = %s"); params.append(option_id)
+        if promotion_id:
+            clauses.append("r.promotion_id = %s"); params.append(promotion_id)
+        if search:
+            clauses.append(
+                "(r.student_number ILIKE %s OR r.full_name ILIKE %s "
+                " OR r.nom ILIKE %s OR r.prenom ILIKE %s)"
+            )
+            like = f"%{search}%"
+            params += [like, like, like, like]
+        if compte_filter == "avec":
+            clauses.append("s.id IS NOT NULL")
+        elif compte_filter == "sans":
+            clauses.append("s.id IS NULL")
+        return clauses, params
+
+    @staticmethod
+    def count_filtered(university_id, annee=None, filiere_id=None,
+                       option_id=None, promotion_id=None,
+                       search=None, compte_filter=None):
+        """Nombre total de lignes après filtres (pour pagination)."""
+        clauses, params = StudentRegistryQueries._build_filter_clause(
+            annee, filiere_id, option_id, promotion_id, search, compte_filter
+        )
+        where = "WHERE r.university_id=%s"
+        params = [university_id] + params
+        if clauses:
+            where += " AND " + " AND ".join(clauses)
+        row = execute_query(f"""
+            SELECT COUNT(*) AS n
+            FROM student_registry r
+            LEFT JOIN students s ON s.registry_id = r.id
+            {where}
+        """, params, fetch="one")
+        return row["n"] if row else 0
+
+    @staticmethod
+    def get_paginated(university_id, page=1, per_page=50,
+                      annee=None, filiere_id=None, option_id=None,
+                      promotion_id=None, search=None, compte_filter=None):
+        """Retourne une page d'étudiants avec filtres côté serveur."""
+        clauses, params = StudentRegistryQueries._build_filter_clause(
+            annee, filiere_id, option_id, promotion_id, search, compte_filter
+        )
+        where = "WHERE r.university_id=%s"
+        params = [university_id] + params
+        if clauses:
+            where += " AND " + " AND ".join(clauses)
+        offset = (page - 1) * per_page
+        params += [per_page, offset]
+        return execute_query(f"""
+            SELECT r.*,
+                   d.name  AS department_name,
+                   fi.name AS filiere_name,
+                   o.name  AS option_name,
+                   pr.name AS promotion_name,
+                   (s.id IS NOT NULL) AS is_registered,
+                   s.id               AS student_account_id,
+                   s.username         AS student_username,
+                   s.is_active        AS student_is_active
+            FROM student_registry r
+            LEFT JOIN departments   d  ON r.department_id = d.id
+            LEFT JOIN filieres      fi ON r.filiere_id    = fi.id
+            LEFT JOIN options_etude o  ON r.option_id     = o.id
+            LEFT JOIN promotions    pr ON r.promotion_id  = pr.id
+            LEFT JOIN students      s  ON s.registry_id   = r.id
+            {where}
+            ORDER BY r.annee_academique DESC NULLS LAST,
+                     d.name NULLS LAST, fi.name NULLS LAST, r.full_name
+            LIMIT %s OFFSET %s
+        """, params)
+
+    @staticmethod
+    def get_all_filtered(university_id, annee=None, filiere_id=None,
+                         option_id=None, promotion_id=None,
+                         search=None, compte_filter=None, limit=5000):
+        """Pour export — retourne tous les résultats filtrés (plafonné à limit)."""
+        clauses, params = StudentRegistryQueries._build_filter_clause(
+            annee, filiere_id, option_id, promotion_id, search, compte_filter
+        )
+        where = "WHERE r.university_id=%s"
+        params = [university_id] + params
+        if clauses:
+            where += " AND " + " AND ".join(clauses)
+        params.append(limit)
+        return execute_query(f"""
+            SELECT r.*,
+                   d.name  AS department_name,
+                   fi.name AS filiere_name,
+                   o.name  AS option_name,
+                   pr.name AS promotion_name,
+                   (s.id IS NOT NULL) AS is_registered,
+                   s.id               AS student_account_id,
+                   s.username         AS student_username,
+                   s.is_active        AS student_is_active
+            FROM student_registry r
+            LEFT JOIN departments   d  ON r.department_id = d.id
+            LEFT JOIN filieres      fi ON r.filiere_id    = fi.id
+            LEFT JOIN options_etude o  ON r.option_id     = o.id
+            LEFT JOIN promotions    pr ON r.promotion_id  = pr.id
+            LEFT JOIN students      s  ON s.registry_id   = r.id
+            {where}
+            ORDER BY r.annee_academique DESC NULLS LAST,
+                     d.name NULLS LAST, fi.name NULLS LAST, r.full_name
+            LIMIT %s
+        """, params)
 
     @staticmethod
     def get_by_department(department_id):
@@ -983,20 +1544,20 @@ class StudentRegistryQueries:
                     promotion_txt=None, option_txt=None,
                     department_id=None, filiere_id=None, option_id=None,
                     promotion_id=None, annee_academique=None,
-                    ecole_provenance=None, date_naissance=None, sexe=None):
+                    provenance=None, date_naissance=None, sexe=None):
         return execute_query("""
             INSERT INTO student_registry
                 (student_number, full_name, university_id, class_id,
                  nom, postnom, prenom, promotion_txt, option_txt,
                  department_id, filiere_id, option_id, promotion_id,
-                 annee_academique, ecole_provenance, date_naissance, sexe)
+                 annee_academique, provenance, date_naissance, sexe)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
         """, (student_number.strip().upper(), full_name.strip(),
               university_id, class_id,
               nom, postnom, prenom, promotion_txt, option_txt,
               department_id, filiere_id, option_id, promotion_id,
-              annee_academique, ecole_provenance, date_naissance, sexe),
+              annee_academique, provenance, date_naissance, sexe),
                              fetch="one")
 
     @staticmethod
@@ -1041,14 +1602,15 @@ class StudentRegistryQueries:
                 (student_number, full_name, university_id, class_id,
                  nom, postnom, prenom, promotion_txt, option_txt,
                  department_id, filiere_id, option_id, promotion_id,
-                 annee_academique, ecole_provenance, date_naissance, sexe, statut)
+                 annee_academique, provenance, date_naissance, sexe, statut)
             SELECT
                 r.student_number, r.full_name, r.university_id, NULL,
                 r.nom, r.postnom, r.prenom, pr.name, r.option_txt,
                 r.department_id, r.filiere_id, r.option_id, %s,
-                %s, r.ecole_provenance, r.date_naissance, r.sexe, 'inscrit'
+                %s, src_pr.name, r.date_naissance, r.sexe, 'inscrit'
             FROM student_registry r
             JOIN promotions pr ON pr.id = %s
+            JOIN promotions src_pr ON src_pr.id = %s
             WHERE r.promotion_id = %s
               AND r.annee_academique = %s
               AND r.statut = 'admis'
@@ -1056,7 +1618,7 @@ class StudentRegistryQueries:
             ON CONFLICT (student_number, university_id, annee_academique) DO NOTHING
             RETURNING id
         """, (target_promotion_id, new_year, target_promotion_id,
-              source_promotion_id, source_year, university_id))
+              source_promotion_id, source_promotion_id, source_year, university_id))
 
         # ── Redoublants (même promo, année précédente) ─────────────────────────
         r_redoub = []
@@ -1066,12 +1628,12 @@ class StudentRegistryQueries:
                     (student_number, full_name, university_id, class_id,
                      nom, postnom, prenom, promotion_txt, option_txt,
                      department_id, filiere_id, option_id, promotion_id,
-                     annee_academique, ecole_provenance, date_naissance, sexe, statut)
+                     annee_academique, provenance, date_naissance, sexe, statut)
                 SELECT
                     r.student_number, r.full_name, r.university_id, NULL,
                     r.nom, r.postnom, r.prenom, r.promotion_txt, r.option_txt,
                     r.department_id, r.filiere_id, r.option_id, r.promotion_id,
-                    %s, r.ecole_provenance, r.date_naissance, r.sexe, 'inscrit'
+                    %s, r.provenance, r.date_naissance, r.sexe, 'inscrit'
                 FROM student_registry r
                 WHERE r.promotion_id = %s
                   AND r.annee_academique = %s
@@ -1183,10 +1745,10 @@ class StudentQueries:
 
     @staticmethod
     def get_by_login(login_input, university_id):
-        """Trouve un étudiant par numéro étudiant OU nom d'utilisateur."""
+        """Trouve un étudiant par numéro étudiant OU nom d'utilisateur (actif ou non)."""
         return execute_query("""
             SELECT * FROM students
-            WHERE university_id=%s AND is_active=TRUE
+            WHERE university_id=%s
               AND (student_number=%s OR username=%s)
         """, (university_id,
               login_input.strip().upper(),
@@ -1291,12 +1853,20 @@ class TpAssignmentQueries:
     @staticmethod
     def get_by_professor(professor_id):
         return execute_query("""
-            SELECT t.*, c.name AS course_name, cl.name AS class_name,
+            SELECT t.*, c.id AS course_id, c.name AS course_name,
+                   c.department_id,
+                   d.name AS department_name, d.faculty_id,
+                   f.name AS faculty_name,
+                   cl.name AS class_name, cl.promotion_id,
+                   pr.name AS promotion_name,
                    (SELECT COUNT(*) FROM tp_submissions s
                     WHERE s.tp_assignment_id = t.id) AS submissions_count
             FROM tp_assignments t
-            JOIN courses c  ON t.course_id = c.id
-            JOIN classes cl ON t.class_id  = cl.id
+            JOIN courses     c  ON t.course_id      = c.id
+            JOIN departments d  ON c.department_id  = d.id
+            JOIN faculties   f  ON d.faculty_id     = f.id
+            JOIN classes     cl ON t.class_id       = cl.id
+            JOIN promotions  pr ON cl.promotion_id  = pr.id
             WHERE t.professor_id=%s
             ORDER BY t.created_at DESC
         """, (professor_id,))
@@ -1665,6 +2235,45 @@ class GradeQueries:
         """, (class_id, session_name, student_id), fetch="one")
         return row["rank"] if row else None
 
+    @staticmethod
+    def get_all_sessions_for_annual(class_id):
+        """Toutes les notes publiées des 4 sessions standard pour la délibération annuelle."""
+        return execute_query("""
+            SELECT g.student_id, g.course_id, g.session_name,
+                   g.grade, g.max_grade, g.exam_type,
+                   s.full_name AS student_name, s.student_number,
+                   c.name AS course_name,
+                   COALESCE(c.credits_ec, 1.0) AS credits_ec,
+                   c.ue_id,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.credits     AS ue_credits,
+                   ue.group_label AS ue_group
+            FROM grades g
+            JOIN students s ON g.student_id = s.id
+            JOIN courses  c ON g.course_id  = c.id
+            LEFT JOIN unites_enseignement ue ON c.ue_id = ue.id
+            WHERE s.class_id = %s
+              AND g.status = 'publie'
+              AND g.session_name IN (
+                  'S1 - Session Normale', 'S1 - Session de Rattrapage',
+                  'S2 - Session Normale', 'S2 - Session de Rattrapage'
+              )
+            ORDER BY s.full_name, g.session_name, c.name
+        """, (class_id,))
+
+    @staticmethod
+    def get_nval_course_ids_by_student(student_id, session_name):
+        """Cours où l'étudiant a une note < 10/20 dans une session publiée."""
+        rows = execute_query("""
+            SELECT DISTINCT g.course_id
+            FROM grades g
+            WHERE g.student_id = %s AND g.session_name = %s
+              AND g.status = 'publie'
+              AND (g.grade::float / NULLIF(g.max_grade, 0) * 20) < 10.0
+        """, (student_id, session_name))
+        return {r["course_id"] for r in (rows or [])}
+
 
 # ============================================================
 # ANALYTIQUES
@@ -1690,9 +2299,7 @@ class AnalyticsQueries:
                 (SELECT COUNT(*) FROM students st
                  WHERE st.university_id=u.id AND st.is_active=TRUE)          AS students,
                 (SELECT COUNT(*) FROM professors p
-                 JOIN departments d ON p.department_id=d.id
-                 JOIN faculties   f ON d.faculty_id=f.id
-                 WHERE f.university_id=u.id AND p.is_active=TRUE)            AS professors,
+                 WHERE p.university_id=u.id AND p.is_active=TRUE)            AS professors,
                 (SELECT COUNT(*) FROM schedules s
                  JOIN classes    cl ON s.class_id=cl.id
                  JOIN promotions pr ON cl.promotion_id=pr.id
@@ -2116,12 +2723,16 @@ class GradeClaimQueries:
     def get_pending_by_professor(professor_id):
         return execute_query("""
             SELECT gc.*, g.grade, g.max_grade, g.exam_type, g.session_name,
-                   c.name AS course_name,
+                   c.id AS course_id, c.name AS course_name, c.department_id,
+                   d.name AS department_name, d.faculty_id,
+                   f.name AS faculty_name,
                    s.full_name AS student_name, s.student_number
             FROM grade_claims gc
-            JOIN grades   g ON gc.grade_id   = g.id
-            JOIN courses  c ON g.course_id   = c.id
-            JOIN students s ON gc.student_id = s.id
+            JOIN grades      g ON gc.grade_id    = g.id
+            JOIN courses     c ON g.course_id    = c.id
+            JOIN departments d ON c.department_id = d.id
+            JOIN faculties   f ON d.faculty_id   = f.id
+            JOIN students    s ON gc.student_id  = s.id
             WHERE g.professor_id = %s AND gc.status = 'pending'
             ORDER BY gc.created_at DESC
         """, (professor_id,))
@@ -2140,7 +2751,9 @@ class GradeClaimQueries:
             JOIN students  s  ON gc.student_id = s.id
             JOIN classes   cl ON s.class_id    = cl.id
             JOIN professors p  ON g.professor_id = p.id
-            WHERE p.department_id = %s AND gc.status = 'pending'
+            JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            JOIN departments d ON d.faculty_id = pfa.faculty_id
+            WHERE d.id = %s AND gc.status = 'pending'
             ORDER BY gc.created_at DESC
         """, (department_id,))
 
@@ -2226,8 +2839,10 @@ class GradeModificationRequestQueries:
             JOIN students s  ON g.student_id   = s.id
             JOIN classes  cl ON s.class_id     = cl.id
             JOIN professors p ON r.professor_id = p.id
+            JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            JOIN departments d ON d.faculty_id = pfa.faculty_id
             WHERE r.status = 'pending'
-              AND p.department_id = %s
+              AND d.id = %s
             ORDER BY r.requested_at DESC
         """, (department_id,))
 
@@ -2472,6 +3087,21 @@ class UEQueries:
         """, (department_id,))
 
     @staticmethod
+    def get_by_promotion(promotion_id):
+        """UEs spécifiques à la promotion + UEs partagées (sans promotion)."""
+        return execute_query("""
+            SELECT ue.*,
+                   COUNT(c.id) FILTER (WHERE c.is_active)              AS ec_count,
+                   COALESCE(SUM(c.credits_ec) FILTER (WHERE c.is_active), 0) AS total_ec_credits
+            FROM unites_enseignement ue
+            LEFT JOIN courses c ON c.ue_id = ue.id
+            WHERE (ue.promotion_id = %s OR ue.promotion_id IS NULL)
+              AND ue.is_active = TRUE
+            GROUP BY ue.id
+            ORDER BY ue.group_label, ue.code NULLS LAST, ue.name
+        """, (promotion_id,))
+
+    @staticmethod
     def get_by_id(ue_id):
         return execute_query(
             "SELECT * FROM unites_enseignement WHERE id=%s",
@@ -2479,13 +3109,13 @@ class UEQueries:
         )
 
     @staticmethod
-    def create(department_id, name, code, credits, group_label="A"):
+    def create(department_id, name, code, credits, group_label="A", promotion_id=None):
         return execute_query("""
             INSERT INTO unites_enseignement
-                (department_id, name, code, credits, group_label)
-            VALUES (%s,%s,%s,%s,%s) RETURNING id
+                (department_id, name, code, credits, group_label, promotion_id)
+            VALUES (%s,%s,%s,%s,%s,%s) RETURNING id
         """, (department_id, name, code or None,
-              credits, group_label or "A"), fetch="one")
+              credits, group_label or "A", promotion_id), fetch="one")
 
     @staticmethod
     def update(ue_id, name, code, credits, group_label="A"):
@@ -2553,6 +3183,70 @@ class StudentUEResultsQueries:
             WHERE sur.student_id = %s AND sur.session_name = %s
             ORDER BY ue.group_label, ue.code NULLS LAST
         """, (student_id, session_name))
+
+
+# ============================================================
+# DÉLIBÉRATIONS ANNUELLES
+# ============================================================
+class DeliberationAnnuelleQueries:
+
+    @staticmethod
+    def upsert(student_id, class_id, academic_year, moy_s1, moy_s2,
+               moy_annuelle, credits_obtenus, credits_total,
+               ecs_a_reprendre, decision):
+        execute_query("""
+            INSERT INTO deliberations_annuelles
+                (student_id, class_id, academic_year, moy_s1, moy_s2,
+                 moy_annuelle, credits_obtenus, credits_total,
+                 ecs_a_reprendre, decision, published, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE,NOW())
+            ON CONFLICT (student_id, class_id, academic_year) DO UPDATE SET
+                moy_s1          = EXCLUDED.moy_s1,
+                moy_s2          = EXCLUDED.moy_s2,
+                moy_annuelle    = EXCLUDED.moy_annuelle,
+                credits_obtenus = EXCLUDED.credits_obtenus,
+                credits_total   = EXCLUDED.credits_total,
+                ecs_a_reprendre = EXCLUDED.ecs_a_reprendre,
+                decision        = EXCLUDED.decision,
+                published       = FALSE,
+                updated_at      = NOW()
+        """, (student_id, class_id, academic_year, moy_s1, moy_s2,
+              moy_annuelle, credits_obtenus, credits_total,
+              ecs_a_reprendre, decision), fetch="none")
+
+    @staticmethod
+    def publish(class_id, academic_year, published_by):
+        execute_query("""
+            UPDATE deliberations_annuelles
+            SET published=TRUE, published_at=NOW(), published_by=%s
+            WHERE class_id=%s AND academic_year=%s
+        """, (published_by, class_id, academic_year), fetch="none")
+
+    @staticmethod
+    def get_by_class(class_id, academic_year):
+        return execute_query("""
+            SELECT da.*, s.full_name AS student_name, s.student_number
+            FROM deliberations_annuelles da
+            JOIN students s ON da.student_id = s.id
+            WHERE da.class_id=%s AND da.academic_year=%s
+            ORDER BY da.moy_annuelle DESC NULLS LAST
+        """, (class_id, academic_year))
+
+    @staticmethod
+    def get_published_years_by_student(student_id):
+        """Années académiques pour lesquelles une délibération publiée existe."""
+        return execute_query("""
+            SELECT academic_year FROM deliberations_annuelles
+            WHERE student_id=%s AND published=TRUE
+            ORDER BY academic_year DESC
+        """, (student_id,))
+
+    @staticmethod
+    def get_by_student_year(student_id, academic_year):
+        return execute_query("""
+            SELECT * FROM deliberations_annuelles
+            WHERE student_id=%s AND academic_year=%s AND published=TRUE
+        """, (student_id, academic_year), fetch="one")
 
     @staticmethod
     def get_by_class_session(class_id, session_name):

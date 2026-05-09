@@ -379,6 +379,8 @@ def generate_bulletin_pdf_ue(
     final_decision: str,
     mention: str,
     rank=None,
+    faculty_name: str = "",
+    department_name: str = "",
 ) -> bytes:
     """Génère un bulletin UE/EC au format académique (analogue bulletin.jpeg). Retourne bytes PDF."""
 
@@ -411,23 +413,50 @@ def generate_bulletin_pdf_ue(
         pdf.cell(w, h, txt, border=border, fill=fill, align=align)
         pdf.set_text_color(*_DARK)
 
+    # ── Extraire l'année académique depuis session_name ──────────────────────
+    import re as _re
+    _ay_match = _re.search(r"\d{4}[-/]\d{4}", session_name)
+    _annee_acad = _ay_match.group(0) if _ay_match else ""
+
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_margins(12, 12, 12)
     W = 186  # largeur utile (210 - 24)
 
     # ── En-tête ────────────────────────────────────────────────────────────────
+    # Calculer la hauteur de l'en-tête selon les informations disponibles
+    _header_lines = 2  # université + secrétariat
+    if faculty_name:
+        _header_lines += 1
+    if department_name:
+        _header_lines += 1
+    _header_lines += 2  # promotion+session + année académique
+    _header_h = 10 + _header_lines * 5
+
     pdf.set_fill_color(*_DKBLUE)
-    pdf.rect(0, 0, 210, 30, style="F")
+    pdf.rect(0, 0, 210, _header_h, style="F")
     pdf.set_y(5)
-    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*_WHITE)
-    pdf.cell(210, 8, "BULLETIN DE NOTES", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.cell(210, 5, university_name, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(210, 7, university_name.upper(), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 8)
-    pdf.cell(210, 5, f"Session : {session_name}", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_y(34)
+    pdf.cell(210, 5, "SÉCRÉTARIAT GÉNÉRAL ACADÉMIQUE", align="C", new_x="LMARGIN", new_y="NEXT")
+    if faculty_name:
+        pdf.cell(210, 5, f"FACULTÉ : {faculty_name.upper()}", align="C", new_x="LMARGIN", new_y="NEXT")
+    if department_name:
+        pdf.cell(210, 5, f"DÉP/OPTION : {department_name.upper()}", align="C", new_x="LMARGIN", new_y="NEXT")
+    _sess_upper = session_name.upper()
+    # Extraire la partie session courte (ex: "S1 NORMALE") du nom complet
+    _sess_parts = _sess_upper.split()
+    _sess_label = " ".join(p for p in _sess_parts if not _re.match(r"\d{4}[-/]\d{4}", p)).strip()
+    if not _sess_label:
+        _sess_label = _sess_upper
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(210, 5, f"{promotion_name.upper()}, SESSION {_sess_label}", align="C", new_x="LMARGIN", new_y="NEXT")
+    if _annee_acad:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(210, 5, f"ANNEE ACADEMIQUE {_annee_acad}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_y(_header_h + 4)
     pdf.set_text_color(*_DARK)
 
     # ── Infos étudiant ─────────────────────────────────────────────────────────
@@ -529,7 +558,6 @@ def generate_bulletin_pdf_ue(
         gavg  = group_avgs.get(glabel, 0)
         gc    = _GREEN if gavg >= 10 else _RED
         _lbl  = f"  Moyenne Groupe {glabel}"
-        # span 5 cols then note then empty dec
         pdf.set_text_color(*_DARK)
         _span = sum(_CW[:5])
         pdf.cell(_span, 6, _lbl, border=1, fill=True, align="R")
@@ -539,24 +567,69 @@ def generate_bulletin_pdf_ue(
         pdf.cell(_CW[6], 6, "", border=1, fill=True)
         pdf.ln()
 
-    # Ligne totale
+    # ── Tableau de synthèse RÉSULTATS ─────────────────────────────────────────
+    pdf.ln(4)
     _fc  = _GREEN if final_decision == "VAL" else _RED
     _tac = _GREEN if total_avg >= 10 else _RED
-    pdf.set_fill_color(220, 230, 255)
-    pdf.set_font("Helvetica", "B", 8)
-    _lbl = f"  Moy. Totale  |  {ecs_a_reprendre} EC à reprendre  |  Crédits : {obtained_credits:.0f}/{total_ue_credits:.0f}"
-    _span = sum(_CW[:5])
-    pdf.set_text_color(*_DARK)
-    pdf.cell(_span, 7, _lbl, border=1, fill=True, align="R")
-    pdf.set_text_color(*_tac)
-    pdf.cell(_CW[5], 7, f" {total_avg:.2f}", border=1, fill=True, align="C")
-    pdf.set_text_color(*_fc)
+
+    # Titre centré "RÉSULTATS"
+    pdf.set_fill_color(*_DKBLUE)
+    pdf.set_text_color(*_WHITE)
     pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(_CW[6], 7, f" {final_decision}", border=1, fill=True, align="C")
+    pdf.cell(W, 7, "RÉSULTATS", border=1, fill=True, align="C",
+             new_x="LMARGIN", new_y="NEXT")
+
+    # En-têtes des colonnes de synthèse
+    _sorted_groups = sorted(by_group.keys())
+    _ncols = len(_sorted_groups)
+    # Largeurs : Moy A | Moy B | ... | Moy Totale | Crédits | Nbre EC reprendre | Décision
+    _syn_fixed = [28, 35, 25, 18]   # Moy Totale | Crédits | ECs reprendre | Décision
+    _syn_group_w = max(10, (W - sum(_syn_fixed)) // max(_ncols, 1)) if _ncols > 0 else 30
+
+    pdf.set_fill_color(*_LBLUE)
+    pdf.set_text_color(*_DARK)
+    pdf.set_font("Helvetica", "B", 7)
+    for _gl in _sorted_groups:
+        pdf.cell(_syn_group_w, 6, f" Moy. Gr. {_gl}", border=1, fill=True, align="C")
+    pdf.cell(_syn_fixed[0], 6, " Moy. Totale", border=1, fill=True, align="C")
+    pdf.cell(_syn_fixed[1], 6, f" Crédits/{total_ue_credits:.0f}", border=1, fill=True, align="C")
+    pdf.cell(_syn_fixed[2], 6, " ECs à reprendre", border=1, fill=True, align="C")
+    pdf.cell(_syn_fixed[3], 6, " Décision", border=1, fill=True, align="C")
     pdf.ln()
 
+    # Valeurs
+    pdf.set_fill_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 8)
+    for _gl in _sorted_groups:
+        _ga = group_avgs.get(_gl, 0)
+        _gc = _GREEN if _ga >= 10 else _RED
+        pdf.set_text_color(*_gc)
+        pdf.cell(_syn_group_w, 7, f" {_ga:.2f}", border=1, fill=True, align="C")
+    pdf.set_text_color(*_tac)
+    pdf.cell(_syn_fixed[0], 7, f" {total_avg:.2f}", border=1, fill=True, align="C")
+    pdf.set_text_color(*_DARK)
+    pdf.cell(_syn_fixed[1], 7, f" {obtained_credits:.0f}/{total_ue_credits:.0f}", border=1, fill=True, align="C")
+    pdf.cell(_syn_fixed[2], 7, f" {ecs_a_reprendre}", border=1, fill=True, align="C")
+    pdf.set_text_color(*_fc)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(_syn_fixed[3], 7, f" {final_decision}", border=1, fill=True, align="C")
+    pdf.ln()
+
+    # Note explicative
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "I", 8)
+    if final_decision == "VAL":
+        pdf.set_text_color(*_GREEN)
+        pdf.cell(W, 5, "VAL = Vous avez validé le semestre",
+                 align="L", new_x="LMARGIN", new_y="NEXT")
+    else:
+        pdf.set_text_color(*_RED)
+        pdf.cell(W, 5,
+                 f"NVAL = Semestre non validé — {ecs_a_reprendre} EC(s) à reprendre",
+                 align="L", new_x="LMARGIN", new_y="NEXT")
+
     # ── Pied de page ───────────────────────────────────────────────────────────
-    pdf.ln(8)
+    pdf.ln(6)
     pdf.set_draw_color(*_BLUE)
     pdf.line(12, pdf.get_y(), 198, pdf.get_y())
     pdf.ln(2)
