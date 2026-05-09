@@ -162,6 +162,20 @@ def render_super_admin():
                                 UniversityQueries.delete(uni["id"])
                                 st.warning(f"'{uni['name']}' désactivée."); st.rerun()
 
+                    st.divider()
+                    st.markdown("**⚠️ Suppression définitive**")
+                    _ck = f"confirm_del_uni_{uni['id']}"
+                    if st.checkbox("Je confirme vouloir supprimer cette université et toutes ses données", key=_ck):
+                        if st.button("🗑️ Supprimer définitivement", key=f"hard_del_uni_{uni['id']}",
+                                     type="primary", use_container_width=True):
+                            try:
+                                from db.connection import execute_query as _eq_del
+                                _eq_del("DELETE FROM universities WHERE id=%s",
+                                        (uni["id"],), fetch="none")
+                                st.success("Université supprimée définitivement."); st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur : {e}")
+
         # ── Universités désactivées ───────────────────────────────────────────
         if inactive_unis:
             st.markdown("#### ⛔ Universités désactivées")
