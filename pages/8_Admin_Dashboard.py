@@ -442,13 +442,14 @@ def render_admin_universite():
     c4.metric("Étudiants",    stats.get("students_count", 0))
     st.divider()
 
-    tab_fac, tab_dept, tab_profs, tab_admins, tab_announce, tab_etu_uni = st.tabs([
+    tab_fac, tab_dept, tab_profs, tab_admins, tab_announce, tab_etu_uni, tab_acad = st.tabs([
         "📚 Facultés",
         "🏬 Départements",
         "👨‍🏫 Professeurs",
         "👥 Administrateurs",
         "📢 Communiqués",
         "🎓 Étudiants",
+        "🏢 Gestion Académique",
     ])
 
     # ── ONGLET 1 : FACULTÉS ───────────────────────────────────────────────────
@@ -905,6 +906,24 @@ def render_admin_universite():
                 )
 
 
+    # ── ONGLET 7 : GESTION ACADÉMIQUE ────────────────────────────────────────
+    with tab_acad:
+        from db.queries import DepartmentQueries as _DQ_acad
+        _all_depts_acad = _DQ_acad.get_by_university(uni_id) or []
+        if not _all_depts_acad:
+            st.info("Aucun département dans cette université. Créez d'abord des facultés et des départements.")
+        else:
+            _dept_acad_sel = st.selectbox(
+                "Sélectionner un département à gérer",
+                _all_depts_acad,
+                format_func=lambda d: f"{d['faculty_name']} › {d['name']}",
+                key="acad_dept_sel_uni",
+            )
+            if _dept_acad_sel:
+                st.divider()
+                render_admin_departement(dept_id_override=_dept_acad_sel["id"])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ADMIN FACULTÉ
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1148,7 +1167,7 @@ def render_admin_faculte():
 # ══════════════════════════════════════════════════════════════════════════════
 # ADMIN DÉPARTEMENT
 # ══════════════════════════════════════════════════════════════════════════════
-def render_admin_departement():
+def render_admin_departement(dept_id_override=None):
     from db.queries import (PromotionQueries, ClassQueries, CourseQueries,
                              ProfessorQueries, ScheduleQueries,
                              AnnouncementQueries, DepartmentQueries,
@@ -1157,7 +1176,7 @@ def render_admin_departement():
                              GradeModificationRequestQueries,
                              AttendanceQueries, GradeClaimQueries)
 
-    dept_id = user["department_id"]
+    dept_id = dept_id_override or user["department_id"]
     if not dept_id:
         st.error("Aucun département associé à ce compte."); return
 

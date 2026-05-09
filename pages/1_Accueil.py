@@ -5,6 +5,13 @@ from utils.components import inject_global_css
 
 inject_global_css()
 
+# Déterminer l'université de l'utilisateur connecté (admin/prof ou étudiant)
+_conn_uni_id = None
+if st.session_state.get("authenticated") and st.session_state.get("user"):
+    _conn_uni_id = st.session_state["user"].get("university_id")
+elif st.session_state.get("student_authenticated") and st.session_state.get("student"):
+    _conn_uni_id = st.session_state["student"].get("university_id")
+
 st.markdown("""
 <style>
 /* ── Hero ──────────────────────────────────────────────────────────────── */
@@ -204,34 +211,52 @@ for col, (icon, title, desc) in zip([f1, f2, f3, f4], features):
 # ════════════════════════════════════════════════════════════════════════════
 # BARRE DE STATS
 # ════════════════════════════════════════════════════════════════════════════
-try:
-    stats = UniversityQueries.get_platform_stats() or {}
-except Exception:
-    stats = {}
-
-uni_count   = stats.get("uni_count", 0)
-prof_count  = stats.get("prof_count", 0)
-sch_count   = stats.get("schedule_count", 0)
-stu_count   = stats.get("student_count", 0)
-
-st.markdown(f"""
+if _conn_uni_id:
+    try:
+        from db.connection import execute_query as _eq_acc
+        _s = _eq_acc("""
+            SELECT
+                (SELECT COUNT(*) FROM professors WHERE university_id=%s AND is_active=TRUE) AS prof_count,
+                (SELECT COUNT(*) FROM schedules sch
+                 JOIN courses c ON sch.course_id=c.id
+                 JOIN promotions pr ON c.promotion_id=pr.id
+                 JOIN departments d ON pr.department_id=d.id
+                 JOIN faculties f ON d.faculty_id=f.id
+                 WHERE f.university_id=%s AND sch.is_active=TRUE) AS schedule_count,
+                (SELECT COUNT(*) FROM students WHERE university_id=%s AND is_active=TRUE) AS student_count,
+                (SELECT COUNT(*) FROM departments d
+                 JOIN faculties f ON d.faculty_id=f.id
+                 WHERE f.university_id=%s AND d.is_active=TRUE) AS dept_count
+        """, (_conn_uni_id,)*4, fetch="one") or {}
+    except Exception:
+        _s = {}
+    prof_count = _s.get("prof_count", 0)
+    sch_count  = _s.get("schedule_count", 0)
+    stu_count  = _s.get("student_count", 0)
+    dept_count = _s.get("dept_count", 0)
+    st.markdown(f"""
 <div class="stats-bar">
-    <div class="stat-item">
-        <div class="num">{uni_count}</div>
-        <div class="lbl">Université(s)</div>
-    </div>
-    <div class="stat-item">
-        <div class="num">{prof_count}</div>
-        <div class="lbl">Professeurs</div>
-    </div>
-    <div class="stat-item">
-        <div class="num">{sch_count}</div>
-        <div class="lbl">Créneaux planifiés</div>
-    </div>
-    <div class="stat-item">
-        <div class="num">{stu_count}</div>
-        <div class="lbl">Étudiants inscrits</div>
-    </div>
+    <div class="stat-item"><div class="num">{dept_count}</div><div class="lbl">Département(s)</div></div>
+    <div class="stat-item"><div class="num">{prof_count}</div><div class="lbl">Professeurs</div></div>
+    <div class="stat-item"><div class="num">{sch_count}</div><div class="lbl">Créneaux planifiés</div></div>
+    <div class="stat-item"><div class="num">{stu_count}</div><div class="lbl">Étudiants inscrits</div></div>
+</div>
+""", unsafe_allow_html=True)
+else:
+    try:
+        stats = UniversityQueries.get_platform_stats() or {}
+    except Exception:
+        stats = {}
+    uni_count  = stats.get("uni_count", 0)
+    prof_count = stats.get("prof_count", 0)
+    sch_count  = stats.get("schedule_count", 0)
+    stu_count  = stats.get("student_count", 0)
+    st.markdown(f"""
+<div class="stats-bar">
+    <div class="stat-item"><div class="num">{uni_count}</div><div class="lbl">Université(s)</div></div>
+    <div class="stat-item"><div class="num">{prof_count}</div><div class="lbl">Professeurs</div></div>
+    <div class="stat-item"><div class="num">{sch_count}</div><div class="lbl">Créneaux planifiés</div></div>
+    <div class="stat-item"><div class="num">{stu_count}</div><div class="lbl">Étudiants inscrits</div></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -239,15 +264,16 @@ st.markdown(f"""
 # ════════════════════════════════════════════════════════════════════════════
 # LISTE DES UNIVERSITÉS
 # ════════════════════════════════════════════════════════════════════════════
-st.markdown("""
+if _conn_uni_id:
+    st.markdown("""
+<p class="section-title">🏛️ Votre université</p>
+<p class="section-sub">Accédez directement à l'emploi du temps de votre établissement</p>
+""", unsafe_allow_html=True)
+else:
+    st.markdown("""
 <p class="section-title">🏛️ Choisissez votre université</p>
 <p class="section-sub">Sélectionnez votre établissement pour accéder à votre emploi du temps</p>
 """, unsafe_allow_html=True)
-
-search = st.text_input(
-    "", placeholder="🔍  Rechercher une université...",
-    label_visibility="collapsed"
-)
 
 try:
     universities = UniversityQueries.get_all()
@@ -256,12 +282,19 @@ except Exception as e:
     st.info("💡 Configurez `.streamlit/secrets.toml`")
     st.stop()
 
-if search:
-    universities = [
-        u for u in universities
-        if search.lower() in u["name"].lower()
-        or (u.get("address") and search.lower() in u["address"].lower())
-    ]
+if _conn_uni_id:
+    universities = [u for u in universities if u["id"] == _conn_uni_id]
+else:
+    search = st.text_input(
+        "", placeholder="🔍  Rechercher une université...",
+        label_visibility="collapsed"
+    )
+    if search:
+        universities = [
+            u for u in universities
+            if search.lower() in u["name"].lower()
+            or (u.get("address") and search.lower() in u["address"].lower())
+        ]
 
 if not universities:
     st.markdown("""
@@ -310,9 +343,10 @@ else:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# CTA INSTITUTIONS
+# CTA INSTITUTIONS (masqué si connecté)
 # ════════════════════════════════════════════════════════════════════════════
-st.markdown("""
+if not _conn_uni_id:
+    st.markdown("""
 <div class="cta-card">
     <h3>📣 Votre université n'est pas encore sur UniSchedule ?</h3>
     <p>
@@ -322,10 +356,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-_, cta_col, _ = st.columns([1, 2, 1])
-with cta_col:
-    st.link_button(
-        "✉️ Nous contacter pour rejoindre la plateforme",
-        "mailto:contact@unischedule.dz",
-        use_container_width=True,
-    )
+    _, cta_col, _ = st.columns([1, 2, 1])
+    with cta_col:
+        st.link_button(
+            "✉️ Nous contacter pour rejoindre la plateforme",
+            "mailto:contact@unischedule.dz",
+            use_container_width=True,
+        )

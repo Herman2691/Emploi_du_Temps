@@ -129,6 +129,15 @@ class FacultyQueries:
 class DepartmentQueries:
 
     @staticmethod
+    def get_by_university(university_id):
+        return execute_query(
+            "SELECT d.*, f.name AS faculty_name FROM departments d "
+            "JOIN faculties f ON d.faculty_id=f.id "
+            "WHERE f.university_id=%s AND d.is_active=TRUE ORDER BY f.name, d.name",
+            (university_id,)
+        )
+
+    @staticmethod
     def get_by_faculty(faculty_id):
         return execute_query(
             "SELECT * FROM departments WHERE faculty_id=%s AND is_active=TRUE ORDER BY name",
