@@ -219,6 +219,8 @@ with tab_tp:
                     if tp.get("subject_url"):
                         _subj_bytes = get_pdf_bytes(tp["subject_url"])
                         _subj_name  = tp.get("subject_file_name", "sujet.pdf")
+                        _sview_key  = f"show_subj_{tp['id']}"
+                        _sview_open = st.session_state.get(_sview_key, False)
                         col_sdl, col_sview, _ = st.columns([1, 1, 3])
                         with col_sdl:
                             if _subj_bytes:
@@ -231,13 +233,12 @@ with tab_tp:
                                     use_container_width=True,
                                 )
                         with col_sview:
-                            _sview_key = f"show_subj_{tp['id']}"
-                            if st.button("👁️ Lire le sujet",
-                                         key=f"btn_subj_{tp['id']}",
+                            _slbl = "🙈 Fermer" if _sview_open else "👁️ Lire le sujet"
+                            if st.button(_slbl, key=f"btn_subj_{tp['id']}",
                                          use_container_width=True):
-                                st.session_state[_sview_key] = \
-                                    not st.session_state.get(_sview_key, False)
-                        if st.session_state.get(f"show_subj_{tp['id']}"):
+                                st.session_state[_sview_key] = not _sview_open
+                                st.rerun()
+                        if _sview_open:
                             _subj_b64 = get_pdf_base64(tp["subject_url"])
                             if _subj_b64:
                                 st.markdown(
@@ -249,7 +250,7 @@ with tab_tp:
                                     unsafe_allow_html=True,
                                 )
                             else:
-                                st.error("Fichier sujet introuvable.")
+                                st.warning("⚠️ Fichier sujet indisponible sur le serveur.")
                         st.divider()
 
                     if already_submitted:
@@ -423,8 +424,11 @@ with tab_cours:
         for course_name, course_docs in by_course.items():
             st.markdown(f"#### 📘 {course_name}")
             for doc in course_docs:
+                _state_key = f"show_doc_{doc['id']}"
+                _is_open   = st.session_state.get(_state_key, False)
                 with st.expander(
-                    f"📄 {doc['title']} — 👨‍🏫 {doc['professor_name']}"
+                    f"📄 {doc['title']} — 👨‍🏫 {doc['professor_name']}",
+                    expanded=_is_open,
                 ):
                     st.caption(
                         f"📄 {doc['file_name']} · "
@@ -433,12 +437,12 @@ with tab_cours:
                     if doc.get("description"):
                         st.caption(doc["description"])
                     col_view, col_dl, _ = st.columns([1, 1, 3])
-                    _state_key = f"show_doc_{doc['id']}"
                     with col_view:
-                        if st.button("👁️ Lire", key=f"btn_view_{doc['id']}",
+                        _btn_label = "🙈 Fermer" if _is_open else "👁️ Lire"
+                        if st.button(_btn_label, key=f"btn_view_{doc['id']}",
                                      use_container_width=True):
-                            st.session_state[_state_key] = \
-                                not st.session_state.get(_state_key, False)
+                            st.session_state[_state_key] = not _is_open
+                            st.rerun()
                     with col_dl:
                         _pdf = get_pdf_bytes(doc["file_url"])
                         if _pdf:
@@ -449,7 +453,7 @@ with tab_cours:
                                                use_container_width=True)
                         else:
                             st.caption("Fichier indisponible")
-                    if st.session_state.get(_state_key):
+                    if _is_open:
                         _b64 = get_pdf_base64(doc["file_url"])
                         if _b64:
                             st.markdown(
@@ -461,7 +465,10 @@ with tab_cours:
                                 unsafe_allow_html=True,
                             )
                         else:
-                            st.error("Fichier PDF introuvable sur le serveur.")
+                            st.warning(
+                                "⚠️ Le fichier n'est plus disponible sur le serveur. "
+                                "Demandez au professeur de le re-uploader."
+                            )
             st.divider()
 
 
