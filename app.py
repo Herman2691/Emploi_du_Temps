@@ -16,7 +16,13 @@ student = get_current_student()
 
 # ── Construction dynamique des pages selon l'état de connexion ─────────────────
 
-if user and user.get("role") == "professeur":
+_is_prof = user and (
+    str(user.get("role", "")).strip().lower() == "professeur"
+    or user.get("professor_id") is not None
+)
+_is_admin = user and not _is_prof
+
+if _is_prof:
     # Professeur → Accueil + Horaire + son espace uniquement
     all_pages = {
         "🌐 Espace Public": [
@@ -28,7 +34,7 @@ if user and user.get("role") == "professeur":
         ],
     }
 
-elif user:
+elif _is_admin:
     # Admin (toute hiérarchie) → tout visible
     all_pages = {
         "🌐 Espace Public": [
