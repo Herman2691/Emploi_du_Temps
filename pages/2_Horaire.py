@@ -144,19 +144,15 @@ if _direct_mode and _direct_cls:
         st.error(f"❌ Erreur chargement : {e}"); st.stop()
 
     _uni_logo_url_d = get_logo_display_url((_uni_d or {}).get("photo_url",""))
-    _logo_html_d = (f"<img src='{_uni_logo_url_d}' style='height:44px;width:44px;"
-                    f"object-fit:contain;border-radius:8px;background:rgba(255,255,255,0.15);"
-                    f"padding:3px;flex-shrink:0'>"
-                    if _uni_logo_url_d else "")
-    st.markdown(f"""
+    _banner_cols_d = st.columns([0.6, 6]) if _uni_logo_url_d else [None, st]
+    if _uni_logo_url_d:
+        with _banner_cols_d[0]:
+            st.image(_uni_logo_url_d, width=44)
+    with _banner_cols_d[1]:
+        st.markdown(f"""
     <div class="class-banner">
-        <div style="display:flex;align-items:center;gap:0.75rem">
-            {_logo_html_d}
-            <div>
-                <h3 style="margin:0">🏫 Classe {d['name']} &nbsp;·&nbsp; {d['promotion_name']}</h3>
-                <span style="font-size:0.82rem;opacity:0.85">{d['department_name']} · {d['faculty_name']}</span>
-            </div>
-        </div>
+        <h3 style="margin:0">🏫 Classe {d['name']} &nbsp;·&nbsp; {d['promotion_name']}</h3>
+        <span style="font-size:0.82rem;opacity:0.85">{d['department_name']} · {d['faculty_name']}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -424,19 +420,22 @@ promo_label = promo_sel_name.split(" (")[0]
 col_banner, col_pdf, col_share = st.columns([5, 1, 1])
 with col_banner:
     _uni_logo_url = get_logo_display_url((_uni_data or {}).get("photo_url",""))
-    _logo_html = (f"<img src='{_uni_logo_url}' style='height:44px;width:44px;"
-                  f"object-fit:contain;border-radius:8px;background:rgba(255,255,255,0.15);"
-                  f"padding:3px;flex-shrink:0'>"
-                  if _uni_logo_url else "")
-    st.markdown(f"""
+    if _uni_logo_url:
+        _bc1, _bc2 = st.columns([0.6, 6])
+        with _bc1:
+            st.image(_uni_logo_url, width=44)
+        with _bc2:
+            st.markdown(f"""
     <div class="class-banner">
-        <div style="display:flex;align-items:center;gap:0.75rem">
-            {_logo_html}
-            <div>
-                <h3 style="margin:0">🏫 Classe {cls['name']} &nbsp;·&nbsp; {promo_label}</h3>
-                <span style="font-size:0.82rem;opacity:0.85">{dept['name']} · {fac['name']}</span>
-            </div>
-        </div>
+        <h3 style="margin:0">🏫 Classe {cls['name']} &nbsp;·&nbsp; {promo_label}</h3>
+        <span style="font-size:0.82rem;opacity:0.85">{dept['name']} · {fac['name']}</span>
+    </div>
+    """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+    <div class="class-banner">
+        <h3 style="margin:0">🏫 Classe {cls['name']} &nbsp;·&nbsp; {promo_label}</h3>
+        <span style="font-size:0.82rem;opacity:0.85">{dept['name']} · {fac['name']}</span>
     </div>
     """, unsafe_allow_html=True)
 with col_pdf:
