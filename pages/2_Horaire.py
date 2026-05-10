@@ -120,6 +120,18 @@ if _direct_cls_id:
     except Exception:
         pass
 
+# ── Mode étudiant connecté : auto-charge son emploi du temps ─────────────────
+if not _direct_mode:
+    _stu_sess = st.session_state.get("student")
+    if _stu_sess and _stu_sess.get("class_id"):
+        try:
+            _stu_full = ClassQueries.get_by_id_full(int(_stu_sess["class_id"]))
+            if _stu_full:
+                _direct_mode = True
+                _direct_cls  = _stu_full
+        except Exception:
+            pass
+
 # ── Navigation directe (sidebar) sans université pré-sélectionnée ─────────────
 uni_id   = st.session_state.get("sel_uni_id")
 uni_name = st.session_state.get("sel_uni_name", "")
@@ -260,6 +272,107 @@ if _direct_mode and _direct_cls:
                     use_container_width=True,
                 )
     st.stop()
+
+# ── Mode professeur connecté : affiche tous ses cours ────────────────────────
+if not _direct_mode:
+    _user_sess = st.session_state.get("user")
+    _is_prof_mode = (
+        _user_sess and (
+            str(_user_sess.get("role", "")).strip().lower() == "professeur"
+            or _user_sess.get("professor_id") is not None
+        )
+    )
+    if _is_prof_mode:
+        _prof_id   = _user_sess.get("professor_id") or _user_sess.get("id")
+        _prof_name = _user_sess.get("name", "Professeur")
+        st.markdown(f"""
+        <div class="class-banner">
+            <h3 style="margin:0">👨‍🏫 {_prof_name}</h3>
+            <span style="font-size:0.82rem;opacity:0.85">Tous mes cours — toutes classes confondues</span>
+        </div>
+        """, unsafe_allow_html=True)
+        try:
+            _all_sched_p = ScheduleQueries.get_by_professor(_prof_id)
+        except Exception as _pe:
+            st.error(f"❌ Erreur chargement horaires : {_pe}")
+            st.stop()
+        if not _all_sched_p:
+            st.info("📭 Aucun cours planifié pour le moment.")
+            st.stop()
+        _dd_p, _wt_p, _wn_p, _mon_p = week_nav("wf_prof")
+        _sat_p = _mon_p + timedelta(days=6)
+        _filtered_p = [
+            s for s in _all_sched_p
+            if s.get("week_type") in ("Toutes", _wt_p)
+            and (s.get("valid_from") is None or _sat_p >= s["valid_from"])
+            and (s.get("valid_until") is None or _mon_p <= s["valid_until"])
+        ]
+        DAYS_P = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"]
+        _list_view_p = st.toggle("📱 Vue liste (mobile)", key="list_view_prof")
+        if not _filtered_p:
+            st.info("📭 Aucun cours planifié pour cette semaine.")
+        elif _list_view_p:
+            for _dayp in DAYS_P:
+                _day_slots_p = [s for s in _filtered_p if s["day"] == _dayp]
+                if not _day_slots_p:
+                    continue
+                st.markdown(f"**{_dayp}** · {_dd_p.get(_dayp, '')}")
+                for s in sorted(_day_slots_p, key=lambda x: x["start_time"]):
+                    _rm_p = s.get("room_name") or s.get("room") or ""
+                    _rm_str_p = f" · 📍 {_rm_p}" if _rm_p else ""
+                    st.markdown(f"""
+                    <div style="background:#EFF6FF;border-left:4px solid #2563EB;
+                                border-radius:8px;padding:0.6rem 1rem;margin-bottom:0.5rem">
+                      <div style="font-weight:700;font-size:0.9rem">{s['course_name']}</div>
+                      <div style="color:#64748B;font-size:0.8rem">
+                        {fmt_time(s['start_time'])}–{fmt_time(s['end_time'])} ·
+                        🏫 {s.get('class_name','')} ({s.get('department_name','')}){_rm_str_p}
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+                st.divider()
+        else:
+            _time_slots_p = sorted(set(
+                (fmt_time(s["start_time"]), fmt_time(s["end_time"]))
+                for s in _filtered_p
+            ))
+            _grid_p = {slot: {day: [] for day in DAYS_P} for slot in _time_slots_p}
+            for s in _filtered_p:
+                _slotp = (fmt_time(s["start_time"]), fmt_time(s["end_time"]))
+                _dayp  = s["day"]
+                if _dayp in DAYS_P and _slotp in _grid_p:
+                    _grid_p[_slotp][_dayp].append(s)
+            _html_p  = '<div class="sched-wrap"><table class="sched"><thead><tr>'
+            _html_p += '<th class="time-th">⏱ Heure</th>'
+            for _dayp in DAYS_P:
+                _dlbl_p = f"<span class='day-date'>{_dd_p[_dayp]}</span>"
+                _html_p += f'<th>{_dayp}{_dlbl_p}</th>'
+            _html_p += '</tr></thead><tbody>'
+            for (_start_p, _end_p) in _time_slots_p:
+                _html_p += (
+                    f'<tr><td class="time-td">'
+                    f'<span style="color:#1E293B;font-size:0.80rem">{_start_p}</span>'
+                    f'<br><span style="color:#CBD5E1;font-size:0.58rem">▼</span>'
+                    f'<br><span style="color:#1E293B;font-size:0.80rem">{_end_p}</span>'
+                    f'</td>'
+                )
+                for _dayp in DAYS_P:
+                    _html_p += '<td>'
+                    for s in _grid_p[(_start_p, _end_p)][_dayp]:
+                        _rm_p     = s.get("room_name") or s.get("room") or "—"
+                        _status_p = s.get("slot_status") or "actif"
+                        _opac_p   = "0.42" if _status_p == "annule" else "1"
+                        _html_p += (
+                            f'<div class="slot slot-cours" style="opacity:{_opac_p}">'
+                            f'<div class="sn sn-cours">{s["course_name"]}</div>'
+                            f'<div class="sp sp-cours">🏫 {s.get("class_name","")}</div>'
+                            f'<div class="sr sr-cours">📍 {_rm_p}</div>'
+                            f'</div>'
+                        )
+                    _html_p += '</td>'
+                _html_p += '</tr>'
+            _html_p += '</tbody></table></div>'
+            st.markdown(_html_p, unsafe_allow_html=True)
+        st.stop()
 
 if not uni_id:
     # L'étudiant arrive directement par la sidebar → lui laisser choisir l'université ici
