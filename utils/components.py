@@ -72,7 +72,15 @@ html, body, [class*="css"] {
 }
 [data-testid="stSidebar"] > div:first-child { padding-top: 1.25rem !important; }
 
-/* ── Liens de navigation sidebar — texte noir desktop ET mobile ──────────── */
+/* ── Navigation sidebar — 1er niveau (titres de groupe) ET 2e niveau (liens) */
+/* Titres de groupe : Espace Public, Espace Étudiant, etc. */
+[data-testid="stSidebarNavSeparator"] p,
+[data-testid="stSidebarNavSeparator"] span,
+[data-testid="stSidebarNavSeparator"] {
+    color: #64748B !important;
+    -webkit-text-fill-color: #64748B !important;
+}
+/* Liens de page (2e niveau) */
 [data-testid="stSidebarNavLink"] p,
 [data-testid="stSidebarNavLink"] span {
     color: #1E293B !important;
@@ -86,6 +94,12 @@ html, body, [class*="css"] {
 }
 
 @media (max-width: 768px) {
+    [data-testid="stSidebarNavSeparator"] p,
+    [data-testid="stSidebarNavSeparator"] span,
+    [data-testid="stSidebarNavSeparator"] {
+        color: #64748B !important;
+        -webkit-text-fill-color: #64748B !important;
+    }
     [data-testid="stSidebarNavLink"] p,
     [data-testid="stSidebarNavLink"] span {
         color: #1E293B !important;
