@@ -71,6 +71,66 @@ html, body, [class*="css"] {
     box-shadow: 2px 0 16px rgba(0,0,0,0.05) !important;
 }
 [data-testid="stSidebar"] > div:first-child { padding-top: 1.25rem !important; }
+
+/* ── Sidebar text — force couleurs identiques desktop ET mobile ─────────── */
+[data-testid="stSidebar"],
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarNav"] {
+    background: white !important;
+    color: #1E293B !important;
+    -webkit-text-fill-color: #1E293B !important;
+}
+[data-testid="stSidebarNavLink"] p,
+[data-testid="stSidebarNavLink"] span,
+[data-testid="stSidebarNavLink"] div {
+    color: #334155 !important;
+    -webkit-text-fill-color: #334155 !important;
+}
+[data-testid="stSidebarNavLink"]:hover p,
+[data-testid="stSidebarNavLink"]:hover span {
+    color: #1E293B !important;
+    -webkit-text-fill-color: #1E293B !important;
+}
+[data-testid="stSidebarNavLink"][aria-current="page"] p,
+[data-testid="stSidebarNavLink"][aria-current="page"] span {
+    color: #2563EB !important;
+    -webkit-text-fill-color: #2563EB !important;
+    font-weight: 600 !important;
+}
+[data-testid="stSidebarNavSeparator"] span,
+[data-testid="stSidebarNavSeparator"] p {
+    color: #94A3B8 !important;
+    -webkit-text-fill-color: #94A3B8 !important;
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+}
+
+/* ── Mobile : identique desktop ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+    [data-testid="stSidebar"] {
+        background: white !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: #1E293B !important;
+        -webkit-text-fill-color: #1E293B !important;
+    }
+    [data-testid="stSidebarNavLink"] p,
+    [data-testid="stSidebarNavLink"] span {
+        color: #334155 !important;
+        -webkit-text-fill-color: #334155 !important;
+    }
+    [data-testid="stSidebarNavLink"][aria-current="page"] p,
+    [data-testid="stSidebarNavLink"][aria-current="page"] span {
+        color: #2563EB !important;
+        -webkit-text-fill-color: #2563EB !important;
+    }
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+}
 .main .block-container { padding-top: 1.25rem !important; padding-bottom: 2rem !important; }
 
 /* ── Tabs ─────────────────────────────────────────────────────────────────── */
