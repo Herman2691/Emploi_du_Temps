@@ -17,63 +17,67 @@ student = get_current_student()
 # ── Construction dynamique des pages selon l'état de connexion ─────────────────
 
 if user and user.get("role") == "professeur":
-    # Professeur connecté → dashboard prof par défaut
-    public_pages = [
-        st.Page("pages/1_Accueil.py", title="Accueil",     icon="🏠"),
-        st.Page("pages/2_Horaire.py", title="Mon Horaire", icon="📅"),
-    ]
-    student_pages = [
-        st.Page("pages/10_Student_Auth.py",      title="Espace Étudiant", icon="🎓"),
-        st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚"),
-    ]
-    prof_pages    = [st.Page("pages/9_Prof_Dashboard.py", title="Mon Espace Prof", icon="📖", default=True)]
-    admin_pages   = [st.Page("pages/7_Admin_Login.py",   title="Connexion Admin", icon="🔑")]
+    # Professeur → Accueil + Horaire + son espace uniquement
+    all_pages = {
+        "🌐 Espace Public": [
+            st.Page("pages/1_Accueil.py",         title="Accueil",         icon="🏠"),
+            st.Page("pages/2_Horaire.py",         title="Mon Horaire",     icon="📅"),
+        ],
+        "👨‍🏫 Espace Professeur": [
+            st.Page("pages/9_Prof_Dashboard.py",  title="Mon Espace Prof", icon="📖", default=True),
+        ],
+    }
 
 elif user:
-    # Admin (toute hiérarchie) connecté → dashboard admin par défaut
-    public_pages = [
-        st.Page("pages/1_Accueil.py", title="Accueil",     icon="🏠"),
-        st.Page("pages/2_Horaire.py", title="Mon Horaire", icon="📅"),
-    ]
-    student_pages = [
-        st.Page("pages/10_Student_Auth.py",      title="Espace Étudiant", icon="🎓"),
-        st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚"),
-    ]
-    prof_pages    = [st.Page("pages/12_Prof_Auth.py",     title="Espace Professeur", icon="👨‍🏫")]
-    admin_pages   = [st.Page("pages/8_Admin_Dashboard.py", title="Dashboard Admin", icon="📊", default=True)]
+    # Admin (toute hiérarchie) → tout visible
+    all_pages = {
+        "🌐 Espace Public": [
+            st.Page("pages/1_Accueil.py",          title="Accueil",           icon="🏠"),
+            st.Page("pages/2_Horaire.py",          title="Mon Horaire",       icon="📅"),
+        ],
+        "🎓 Espace Étudiant": [
+            st.Page("pages/10_Student_Auth.py",    title="Espace Étudiant",   icon="🎓"),
+            st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚"),
+        ],
+        "👨‍🏫 Espace Professeur": [
+            st.Page("pages/12_Prof_Auth.py",       title="Espace Professeur", icon="👨‍🏫"),
+        ],
+        "⚙️ Administration": [
+            st.Page("pages/8_Admin_Dashboard.py",  title="Dashboard Admin",   icon="📊", default=True),
+        ],
+    }
 
 elif student:
-    # Étudiant connecté → dashboard étudiant par défaut
-    public_pages = [
-        st.Page("pages/1_Accueil.py", title="Accueil",     icon="🏠"),
-        st.Page("pages/2_Horaire.py", title="Mon Horaire", icon="📅"),
-    ]
-    student_pages = [
-        st.Page("pages/10_Student_Auth.py",      title="Espace Étudiant", icon="🎓"),
-        st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚", default=True),
-    ]
-    prof_pages  = [st.Page("pages/12_Prof_Auth.py", title="Espace Professeur", icon="👨‍🏫")]
-    admin_pages = [st.Page("pages/7_Admin_Login.py", title="Connexion Admin",  icon="🔑")]
+    # Étudiant → Accueil + Horaire + son espace uniquement
+    all_pages = {
+        "🌐 Espace Public": [
+            st.Page("pages/1_Accueil.py",          title="Accueil",         icon="🏠"),
+            st.Page("pages/2_Horaire.py",          title="Mon Horaire",     icon="📅"),
+        ],
+        "🎓 Espace Étudiant": [
+            st.Page("pages/10_Student_Auth.py",    title="Espace Étudiant", icon="🎓"),
+            st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",    icon="📚", default=True),
+        ],
+    }
 
 else:
-    # Non connecté → Login unifié par défaut
-    public_pages = [
-        st.Page("pages/1_Accueil.py", title="Connexion",   icon="🔑", default=True),
-        st.Page("pages/2_Horaire.py", title="Emploi du Temps", icon="📅"),
-    ]
-    student_pages = [
-        st.Page("pages/10_Student_Auth.py",      title="Créer un compte", icon="📝"),
-        st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚"),
-    ]
-    prof_pages    = [st.Page("pages/12_Prof_Auth.py",  title="Espace Professeur", icon="👨‍🏫")]
-    admin_pages   = [st.Page("pages/7_Admin_Login.py", title="Connexion Admin",   icon="🔑")]
-
-all_pages = {
-    "🌐 Espace Public":      public_pages,
-    "🎓 Espace Étudiant":    student_pages,
-    "👨‍🏫 Espace Professeur": prof_pages,
-    "⚙️ Administration":     admin_pages,
-}
+    # Non connecté → Login unifié + Horaire public
+    all_pages = {
+        "🌐 Espace Public": [
+            st.Page("pages/1_Accueil.py",          title="Connexion",        icon="🔑", default=True),
+            st.Page("pages/2_Horaire.py",          title="Emploi du Temps",  icon="📅"),
+        ],
+        "🎓 Espace Étudiant": [
+            st.Page("pages/10_Student_Auth.py",    title="Créer un compte",  icon="📝"),
+            st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",     icon="📚"),
+        ],
+        "👨‍🏫 Espace Professeur": [
+            st.Page("pages/12_Prof_Auth.py",       title="Espace Professeur", icon="👨‍🏫"),
+        ],
+        "⚙️ Administration": [
+            st.Page("pages/7_Admin_Login.py",      title="Connexion Admin",   icon="🔑"),
+        ],
+    }
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
