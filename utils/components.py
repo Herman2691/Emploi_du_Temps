@@ -72,44 +72,20 @@ html, body, [class*="css"] {
 }
 [data-testid="stSidebar"] > div:first-child { padding-top: 1.25rem !important; }
 
-/* ── Navigation sidebar — 1er niveau (titres de groupe) ET 2e niveau (liens) */
-/* Titres de groupe : Espace Public, Espace Étudiant, etc. */
-[data-testid="stSidebarNavSeparator"] p,
-[data-testid="stSidebarNavSeparator"] span,
-[data-testid="stSidebarNavSeparator"] {
-    color: #64748B !important;
-    -webkit-text-fill-color: #64748B !important;
-}
-/* Liens de page (2e niveau) */
-[data-testid="stSidebarNavLink"] p,
-[data-testid="stSidebarNavLink"] span {
+/* ── Navigation sidebar — tout le texte en noir (1er et 2e niveau) ───────── */
+[data-testid="stSidebarNav"] *,
+[data-testid="stSidebarNav"] p,
+[data-testid="stSidebarNav"] span,
+[data-testid="stSidebarNav"] a {
     color: #1E293B !important;
     -webkit-text-fill-color: #1E293B !important;
 }
+/* Lien actif en bleu */
 [data-testid="stSidebarNavLink"][aria-current="page"] p,
 [data-testid="stSidebarNavLink"][aria-current="page"] span {
     color: #2563EB !important;
     -webkit-text-fill-color: #2563EB !important;
     font-weight: 600 !important;
-}
-
-@media (max-width: 768px) {
-    [data-testid="stSidebarNavSeparator"] p,
-    [data-testid="stSidebarNavSeparator"] span,
-    [data-testid="stSidebarNavSeparator"] {
-        color: #64748B !important;
-        -webkit-text-fill-color: #64748B !important;
-    }
-    [data-testid="stSidebarNavLink"] p,
-    [data-testid="stSidebarNavLink"] span {
-        color: #1E293B !important;
-        -webkit-text-fill-color: #1E293B !important;
-    }
-    [data-testid="stSidebarNavLink"][aria-current="page"] p,
-    [data-testid="stSidebarNavLink"][aria-current="page"] span {
-        color: #2563EB !important;
-        -webkit-text-fill-color: #2563EB !important;
-    }
 }
 .main .block-container { padding-top: 1.25rem !important; padding-bottom: 2rem !important; }
 
