@@ -217,10 +217,13 @@ with tab_tp:
                         )
 
                     if tp.get("subject_url"):
-                        _subj_bytes = get_pdf_bytes(tp["subject_url"])
-                        _subj_name  = tp.get("subject_file_name", "sujet.pdf")
                         _sview_key  = f"show_subj_{tp['id']}"
                         _sview_open = st.session_state.get(_sview_key, False)
+                        try:
+                            _subj_bytes = get_pdf_bytes(tp["subject_url"])
+                        except Exception:
+                            _subj_bytes = None
+                        _subj_name = tp.get("subject_file_name", "sujet.pdf")
                         col_sdl, col_sview, _ = st.columns([1, 1, 3])
                         with col_sdl:
                             if _subj_bytes:
@@ -237,17 +240,20 @@ with tab_tp:
                             if st.button(_slbl, key=f"btn_subj_{tp['id']}",
                                          use_container_width=True):
                                 st.session_state[_sview_key] = not _sview_open
-                                st.rerun()
                         if _sview_open:
-                            _subj_b64 = get_pdf_base64(tp["subject_url"])
-                            if _subj_b64:
-                                st.markdown(
-                                    f'<iframe src="{_subj_b64}" '
-                                    f'width="100%" height="680px" '
-                                    f'style="border:1px solid #E2E8F0;'
-                                    f'border-radius:10px;margin-top:0.5rem">'
-                                    f'</iframe>',
-                                    unsafe_allow_html=True,
+                            if _subj_bytes:
+                                import base64 as _b64mod_tp
+                                import streamlit.components.v1 as _comp_tp
+                                _b64str_tp = _b64mod_tp.b64encode(_subj_bytes).decode()
+                                _comp_tp.html(
+                                    f"""<!DOCTYPE html><html>
+                                    <body style="margin:0;padding:0;background:#fff">
+                                    <embed src="data:application/pdf;base64,{_b64str_tp}"
+                                           type="application/pdf"
+                                           width="100%" height="680px">
+                                    </body></html>""",
+                                    height=690,
+                                    scrolling=False,
                                 )
                             else:
                                 st.warning("⚠️ Fichier sujet indisponible sur le serveur.")
@@ -432,41 +438,53 @@ with tab_cours:
                 ):
                     st.caption(
                         f"📄 {doc['file_name']} · "
-                        f"💾 {doc.get('file_size_kb',0)} Ko"
+                        f"💾 {doc.get('file_size_kb', 0)} Ko"
                     )
                     if doc.get("description"):
                         st.caption(doc["description"])
+
+                    # Récupérer les bytes une seule fois
+                    try:
+                        _pdf_bytes = get_pdf_bytes(doc["file_url"]) if doc.get("file_url") else None
+                    except Exception:
+                        _pdf_bytes = None
+
                     col_view, col_dl, _ = st.columns([1, 1, 3])
                     with col_view:
                         _btn_label = "🙈 Fermer" if _is_open else "👁️ Lire"
                         if st.button(_btn_label, key=f"btn_view_{doc['id']}",
                                      use_container_width=True):
                             st.session_state[_state_key] = not _is_open
-                            st.rerun()
                     with col_dl:
-                        _pdf = get_pdf_bytes(doc["file_url"])
-                        if _pdf:
-                            st.download_button("⬇️ Télécharger", _pdf,
-                                               file_name=doc["file_name"],
-                                               mime="application/pdf",
-                                               key=f"dl_doc_{doc['id']}",
-                                               use_container_width=True)
+                        if _pdf_bytes:
+                            st.download_button(
+                                "⬇️ Télécharger", _pdf_bytes,
+                                file_name=doc["file_name"],
+                                mime="application/pdf",
+                                key=f"dl_doc_{doc['id']}",
+                                use_container_width=True,
+                            )
                         else:
                             st.caption("Fichier indisponible")
+
                     if _is_open:
-                        _b64 = get_pdf_base64(doc["file_url"])
-                        if _b64:
-                            st.markdown(
-                                f'<iframe src="{_b64}" '
-                                f'width="100%" height="680px" '
-                                f'style="border:1px solid #E2E8F0;'
-                                f'border-radius:10px;margin-top:0.5rem">'
-                                f'</iframe>',
-                                unsafe_allow_html=True,
+                        if _pdf_bytes:
+                            import base64 as _b64mod
+                            import streamlit.components.v1 as _comp
+                            _b64str = _b64mod.b64encode(_pdf_bytes).decode()
+                            _comp.html(
+                                f"""<!DOCTYPE html><html>
+                                <body style="margin:0;padding:0;background:#fff">
+                                <embed src="data:application/pdf;base64,{_b64str}"
+                                       type="application/pdf"
+                                       width="100%" height="680px">
+                                </body></html>""",
+                                height=690,
+                                scrolling=False,
                             )
                         else:
                             st.warning(
-                                "⚠️ Le fichier n'est plus disponible sur le serveur. "
+                                "⚠️ Fichier indisponible. "
                                 "Demandez au professeur de le re-uploader."
                             )
             st.divider()
