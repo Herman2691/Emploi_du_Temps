@@ -247,22 +247,25 @@ with tab_tp:
                                     _tp_page_key = f"tp_page_{tp['id']}"
                                     _tp_pdoc     = _fitz_tp.open(stream=_subj_bytes, filetype="pdf")
                                     _tp_total    = len(_tp_pdoc)
-                                    _tp_cur      = max(0, min(
-                                        st.session_state.get(_tp_page_key, 0), _tp_total - 1
-                                    ))
-                                    _tp_pix = _tp_pdoc[_tp_cur].get_pixmap(
-                                        matrix=_fitz_tp.Matrix(2.0, 2.0)
-                                    )
-                                    _tp_pdoc.close()
-                                    st.image(_tp_pix.tobytes("png"), use_container_width=True)
+
                                     _tc1, _tc2, _tc3 = st.columns([1, 2, 1])
+                                    _tp_now = st.session_state.get(_tp_page_key, 0)
                                     with _tc1:
                                         if st.button("◀ Précédent",
                                                      key=f"prev_tp_{tp['id']}",
-                                                     disabled=(_tp_cur == 0),
+                                                     disabled=(_tp_now == 0),
                                                      use_container_width=True):
-                                            st.session_state[_tp_page_key] = _tp_cur - 1
-                                            st.rerun()
+                                            st.session_state[_tp_page_key] = _tp_now - 1
+                                    with _tc3:
+                                        if st.button("Suivant ▶",
+                                                     key=f"next_tp_{tp['id']}",
+                                                     disabled=(_tp_now >= _tp_total - 1),
+                                                     use_container_width=True):
+                                            st.session_state[_tp_page_key] = _tp_now + 1
+
+                                    _tp_cur = max(0, min(
+                                        st.session_state.get(_tp_page_key, 0), _tp_total - 1
+                                    ))
                                     with _tc2:
                                         st.markdown(
                                             f"<div style='text-align:center;padding:0.4rem 0;"
@@ -270,13 +273,12 @@ with tab_tp:
                                             f"Page {_tp_cur + 1} / {_tp_total}</div>",
                                             unsafe_allow_html=True,
                                         )
-                                    with _tc3:
-                                        if st.button("Suivant ▶",
-                                                     key=f"next_tp_{tp['id']}",
-                                                     disabled=(_tp_cur >= _tp_total - 1),
-                                                     use_container_width=True):
-                                            st.session_state[_tp_page_key] = _tp_cur + 1
-                                            st.rerun()
+                                    _tp_pix = _tp_pdoc[_tp_cur].get_pixmap(
+                                        matrix=_fitz_tp.Matrix(2.0, 2.0)
+                                    )
+                                    _tp_pdoc.close()
+                                    st.image(_tp_pix.tobytes("png"), use_container_width=True)
+
                                 except ImportError:
                                     st.info("📥 Utilisez le bouton Télécharger pour lire ce fichier.")
                                 except Exception as _e:
@@ -481,6 +483,8 @@ with tab_cours:
                         if st.button(_btn_label, key=f"btn_view_{doc['id']}",
                                      use_container_width=True):
                             st.session_state[_state_key] = not _is_open
+                            if _is_open:
+                                st.session_state.pop(f"pdf_page_{doc['id']}", None)
                     with col_dl:
                         if _pdf_bytes:
                             st.download_button(
@@ -500,22 +504,29 @@ with tab_cours:
                                 _page_key = f"pdf_page_{doc['id']}"
                                 _pdoc     = _fitz.open(stream=_pdf_bytes, filetype="pdf")
                                 _total_pg = len(_pdoc)
-                                _cur_pg   = max(0, min(
-                                    st.session_state.get(_page_key, 0), _total_pg - 1
-                                ))
-                                _pix = _pdoc[_cur_pg].get_pixmap(
-                                    matrix=_fitz.Matrix(2.0, 2.0)
-                                )
-                                _pdoc.close()
-                                st.image(_pix.tobytes("png"), use_container_width=True)
+
+                                # ── Navigation D'ABORD : la mise à jour du state
+                                # ── se fait AVANT la lecture de _cur_pg,
+                                # ── donc l'image correcte s'affiche dans le même rerun
                                 _nc1, _nc2, _nc3 = st.columns([1, 2, 1])
+                                _pg_now = st.session_state.get(_page_key, 0)
                                 with _nc1:
                                     if st.button("◀ Précédent",
                                                  key=f"prev_pg_{doc['id']}",
-                                                 disabled=(_cur_pg == 0),
+                                                 disabled=(_pg_now == 0),
                                                  use_container_width=True):
-                                        st.session_state[_page_key] = _cur_pg - 1
-                                        st.rerun()
+                                        st.session_state[_page_key] = _pg_now - 1
+                                with _nc3:
+                                    if st.button("Suivant ▶",
+                                                 key=f"next_pg_{doc['id']}",
+                                                 disabled=(_pg_now >= _total_pg - 1),
+                                                 use_container_width=True):
+                                        st.session_state[_page_key] = _pg_now + 1
+
+                                # ── Lire la page après les boutons (état déjà mis à jour)
+                                _cur_pg = max(0, min(
+                                    st.session_state.get(_page_key, 0), _total_pg - 1
+                                ))
                                 with _nc2:
                                     st.markdown(
                                         f"<div style='text-align:center;padding:0.4rem 0;"
@@ -523,13 +534,14 @@ with tab_cours:
                                         f"Page {_cur_pg + 1} / {_total_pg}</div>",
                                         unsafe_allow_html=True,
                                     )
-                                with _nc3:
-                                    if st.button("Suivant ▶",
-                                                 key=f"next_pg_{doc['id']}",
-                                                 disabled=(_cur_pg >= _total_pg - 1),
-                                                 use_container_width=True):
-                                        st.session_state[_page_key] = _cur_pg + 1
-                                        st.rerun()
+
+                                # ── Rendu de la page courante
+                                _pix = _pdoc[_cur_pg].get_pixmap(
+                                    matrix=_fitz.Matrix(2.0, 2.0)
+                                )
+                                _pdoc.close()
+                                st.image(_pix.tobytes("png"), use_container_width=True)
+
                             except ImportError:
                                 st.info("📥 Utilisez le bouton Télécharger pour lire ce fichier.")
                             except Exception as _e:
