@@ -55,7 +55,7 @@ st.divider()
 
 # ── Onglets ────────────────────────────────────────────────────────────────────
 (tab_schedule, tab_docs, tab_tp, tab_notes, tab_classes,
- tab_presence, tab_messages, tab_claims) = st.tabs([
+ tab_presence, tab_messages, tab_claims, tab_chatbot_p) = st.tabs([
     "📅 Mon Emploi du Temps",
     "📄 Cours & Documents",
     "📝 Travaux Pratiques",
@@ -64,6 +64,7 @@ st.divider()
     "📍 Présences",
     "💬 Messages",
     "🔔 Réclamations",
+    "🤖 UniBot",
 ])
 
 
@@ -1725,3 +1726,21 @@ with tab_claims:
                 st.info(_DEPT_LBL.get(_dept_val, "—"))
                 if _hcl.get("dept_notes"):
                     st.caption(f"Note du département : {_hcl['dept_notes']}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET UNIBOT — CHATBOT IA
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_chatbot_p:
+    st.markdown("#### 🤖 UniBot — Ton assistant intelligent")
+    st.caption(
+        "Pose-moi n'importe quelle question sur la saisie des notes, "
+        "les réclamations, les TPs ou l'utilisation de l'application."
+    )
+    from utils.chatbot import render_chatbot, _system_professor
+    try:
+        _cb_pending = GradeClaimQueries.get_pending_by_professor(prof_id) or []
+    except Exception:
+        _cb_pending = []
+    _prof_info = {"name": user.get("name", ""), "role": "Professeur"}
+    _cb_sys_p  = _system_professor(_prof_info, classes, _cb_pending)
+    render_chatbot(_cb_sys_p, session_key="chatbot_prof")
