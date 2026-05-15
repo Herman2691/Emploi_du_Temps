@@ -58,7 +58,9 @@ def render_super_admin():
     from db.queries import UniversityQueries, UserQueries
     from utils.auth import hash_password
 
-    tab_unis, tab_admins, tab_analytics, tab_chatbot_sa = st.tabs(["🏛️ Universités", "👥 Comptes Administrateurs", "📊 Analytiques", "🤖 UniBot"])
+    tab_unis, tab_admins, tab_analytics = st.tabs(["🏛️ Universités", "👥 Comptes Administrateurs", "📊 Analytiques"])
+    from utils.chatbot import render_floating_chatbot, _system_admin
+    render_floating_chatbot(_system_admin(user, "Super Administration"), session_key="chatbot_sa")
 
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 1 : UNIVERSITÉS — Ajouter / Modifier / Désactiver / Réactiver
@@ -427,11 +429,6 @@ def render_super_admin():
         else:
             st.info("Aucune inscription dans les 30 derniers jours.")
 
-    with tab_chatbot_sa:
-        st.markdown("#### 🤖 UniBot — Assistant intelligent")
-        st.caption("Pose-moi n'importe quelle question sur la gestion de la plateforme.")
-        from utils.chatbot import render_chatbot, _system_admin
-        render_chatbot(_system_admin(user, "Super Administration"), session_key="chatbot_sa")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -478,7 +475,7 @@ def render_admin_universite():
     c4.metric("Étudiants",    stats.get("students_count", 0))
     st.divider()
 
-    tab_fac, tab_dept, tab_profs, tab_admins, tab_announce, tab_etu_uni, tab_acad, tab_chatbot_uni = st.tabs([
+    tab_fac, tab_dept, tab_profs, tab_admins, tab_announce, tab_etu_uni, tab_acad = st.tabs([
         "📚 Facultés",
         "🏬 Départements",
         "👨‍🏫 Professeurs",
@@ -486,8 +483,9 @@ def render_admin_universite():
         "📢 Communiqués",
         "🎓 Étudiants",
         "🏢 Gestion Académique",
-        "🤖 UniBot",
     ])
+    from utils.chatbot import render_floating_chatbot, _system_admin
+    render_floating_chatbot(_system_admin(user, "Administration Université"), session_key="chatbot_uni")
 
     # ── ONGLET 1 : FACULTÉS ───────────────────────────────────────────────────
     with tab_fac:
@@ -960,11 +958,6 @@ def render_admin_universite():
                 st.divider()
                 render_admin_departement(dept_id_override=_dept_acad_sel["id"])
 
-    with tab_chatbot_uni:
-        st.markdown("#### 🤖 UniBot — Assistant intelligent")
-        st.caption("Pose-moi n'importe quelle question sur la gestion de votre université.")
-        from utils.chatbot import render_chatbot, _system_admin
-        render_chatbot(_system_admin(user, "Administration Université"), session_key="chatbot_uni")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -985,9 +978,11 @@ def render_admin_faculte():
         st.error(f"Erreur : {e}"); return
 
     st.subheader(f"📚 {fac['name'] if fac else 'Votre faculté'}")
-    tab_dept, tab_profs_fac, tab_admins, tab_etu_fac, tab_chatbot_fac = st.tabs([
-        "🏢 Départements", "👨‍🏫 Professeurs", "👥 Admins Département", "🎓 Étudiants", "🤖 UniBot"
+    tab_dept, tab_profs_fac, tab_admins, tab_etu_fac = st.tabs([
+        "🏢 Départements", "👨‍🏫 Professeurs", "👥 Admins Département", "🎓 Étudiants"
     ])
+    from utils.chatbot import render_floating_chatbot, _system_admin
+    render_floating_chatbot(_system_admin(user, "Administration Faculté"), session_key="chatbot_fac")
 
     with tab_dept:
         try:
@@ -1206,11 +1201,6 @@ def render_admin_faculte():
                     unsafe_allow_html=True
                 )
 
-    with tab_chatbot_fac:
-        st.markdown("#### 🤖 UniBot — Assistant intelligent")
-        st.caption("Pose-moi n'importe quelle question sur la gestion de votre faculté.")
-        from utils.chatbot import render_chatbot, _system_admin
-        render_chatbot(_system_admin(user, "Administration Faculté"), session_key="chatbot_fac")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1269,12 +1259,10 @@ def render_admin_departement(dept_id_override=None):
         "📈 Analyses",                # 17
     ])
 
-    # ── UNIBOT SIDEBAR ────────────────────────────────────────────────────────
-    from utils.chatbot import render_chatbot, _system_admin
+    # ── UNIBOT BULLE FLOTTANTE ────────────────────────────────────────────────
+    from utils.chatbot import render_floating_chatbot, _system_admin
     _dept_name_cb = dept.get("name", "") if dept else ""
-    with st.sidebar:
-        with st.expander("🤖 UniBot", expanded=False):
-            render_chatbot(_system_admin(user, _dept_name_cb), session_key="chatbot_admin")
+    render_floating_chatbot(_system_admin(user, _dept_name_cb), session_key="chatbot_admin")
 
     # ── PROMOTIONS ────────────────────────────────────────────────────────────
     with tabs[0]:

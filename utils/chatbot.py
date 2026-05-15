@@ -1,6 +1,7 @@
 # utils/chatbot.py — Chatbot IA UniBot basé sur Mistral AI
 import streamlit as st
 import requests
+import json
 from datetime import datetime
 
 _MISTRAL_URL   = "https://api.mistral.ai/v1/chat/completions"
@@ -253,3 +254,176 @@ def render_chatbot(system_prompt: str, session_key: str = "chatbot_messages"):
         if st.button("🗑️ Vider la conversation", key=f"clear_{session_key}"):
             st.session_state[session_key] = []
             st.rerun()
+
+
+# ── Bulle flottante ───────────────────────────────────────────────────────────
+
+def render_floating_chatbot(system_prompt: str, session_key: str = "chatbot_float"):
+    """Injecte une bulle de chat flottante via HTML/CSS/JS dans la page Streamlit."""
+    try:
+        api_key = _get_api_key()
+    except ValueError as e:
+        st.warning(str(e))
+        return
+
+    sys_json = json.dumps(system_prompt)
+    key_json = json.dumps(api_key)
+    sk       = session_key.replace("-", "_")   # CSS-safe id suffix
+
+    html = f"""
+<style>
+#ub-btn-{sk} {{
+    position:fixed; bottom:24px; right:24px;
+    width:58px; height:58px; border-radius:50%;
+    background:linear-gradient(135deg,#4F46E5,#7C3AED);
+    color:white; font-size:26px; border:none; cursor:pointer;
+    z-index:2147483647;
+    box-shadow:0 4px 20px rgba(79,70,229,.55);
+    display:flex; align-items:center; justify-content:center;
+    transition:transform .2s,box-shadow .2s;
+}}
+#ub-btn-{sk}:hover {{ transform:scale(1.1); box-shadow:0 6px 26px rgba(79,70,229,.75); }}
+#ub-panel-{sk} {{
+    position:fixed; bottom:94px; right:24px;
+    width:350px; height:510px;
+    background:#fff; border-radius:20px;
+    box-shadow:0 16px 48px rgba(0,0,0,.22);
+    display:none; flex-direction:column;
+    z-index:2147483646; overflow:hidden;
+    border:1px solid #E2E8F0;
+}}
+#ub-head-{sk} {{
+    background:linear-gradient(135deg,#4F46E5,#7C3AED);
+    color:#fff; padding:12px 14px;
+    display:flex; align-items:center; gap:10px; flex-shrink:0;
+}}
+#ub-msgs-{sk} {{
+    flex:1; overflow-y:auto; padding:10px;
+    display:flex; flex-direction:column; gap:7px;
+    background:#F8FAFC;
+}}
+.ub-msg-{sk} {{
+    padding:9px 13px; border-radius:14px;
+    max-width:84%; font-size:13px; line-height:1.5; word-wrap:break-word;
+}}
+.ub-user-{sk} {{
+    background:#4F46E5; color:#fff;
+    align-self:flex-end; border-bottom-right-radius:3px;
+}}
+.ub-bot-{sk} {{
+    background:#fff; color:#1E293B;
+    align-self:flex-start; border-bottom-left-radius:3px;
+    box-shadow:0 1px 4px rgba(0,0,0,.08);
+}}
+#ub-typing-{sk} {{
+    color:#94A3B8; font-size:12px; padding:3px 10px;
+    background:#F8FAFC; flex-shrink:0; display:none;
+}}
+#ub-foot-{sk} {{
+    display:flex; gap:7px; padding:9px 11px;
+    border-top:1px solid #E2E8F0; background:#fff; flex-shrink:0;
+    align-items:center;
+}}
+#ub-inp-{sk} {{
+    flex:1; border:1px solid #CBD5E1; border-radius:20px;
+    padding:7px 13px; font-size:13px; outline:none; font-family:inherit;
+}}
+#ub-inp-{sk}:focus {{ border-color:#4F46E5; box-shadow:0 0 0 2px rgba(79,70,229,.15); }}
+#ub-send-{sk} {{
+    background:#4F46E5; color:#fff; border:none; border-radius:50%;
+    width:34px; height:34px; cursor:pointer; font-size:15px; flex-shrink:0;
+}}
+#ub-send-{sk}:hover {{ background:#4338CA; }}
+#ub-send-{sk}:disabled {{ background:#94A3B8; cursor:default; }}
+</style>
+
+<button id="ub-btn-{sk}" title="UniBot" onclick="UB_{sk}.toggle()">🤖</button>
+
+<div id="ub-panel-{sk}">
+  <div id="ub-head-{sk}">
+    <span style="font-size:21px">🤖</span>
+    <div>
+      <div style="font-weight:600;font-size:14px">UniBot</div>
+      <div style="font-size:11px;opacity:.8">Assistant UniSchedule</div>
+    </div>
+    <button onclick="UB_{sk}.toggle()" style="margin-left:auto;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:0">×</button>
+  </div>
+  <div id="ub-msgs-{sk}"></div>
+  <div id="ub-typing-{sk}">⏳ UniBot réfléchit…</div>
+  <div id="ub-foot-{sk}">
+    <input id="ub-inp-{sk}" placeholder="Pose ta question…"
+           onkeydown="if(event.key==='Enter'&&!event.shiftKey){{event.preventDefault();UB_{sk}.send();}}">
+    <button id="ub-send-{sk}" onclick="UB_{sk}.send()">&#10148;</button>
+  </div>
+</div>
+
+<script>
+(function(){{
+  var SK  = {json.dumps(sk)};
+  var KEY = {key_json};
+  var SYS = {sys_json};
+  var LS  = 'unibot_' + SK;
+  var msgs = [];
+  var open = false;
+
+  function g(id) {{ return document.getElementById(id + '-' + SK); }}
+
+  function addMsg(role, text) {{
+    var d = document.createElement('div');
+    d.className = 'ub-msg-' + SK + ' ' + (role==='user' ? 'ub-user-' : 'ub-bot-') + SK;
+    d.textContent = text;
+    var c = g('ub-msgs'); c.appendChild(d); c.scrollTop = c.scrollHeight;
+  }}
+
+  function save() {{ try {{ localStorage.setItem(LS, JSON.stringify(msgs)); }} catch(e){{}} }}
+
+  function restore() {{
+    try {{
+      var s = JSON.parse(localStorage.getItem(LS) || '[]');
+      msgs = s; s.forEach(function(m){{ addMsg(m.role, m.content); }});
+    }} catch(e) {{}}
+  }}
+
+  var app = {{
+    toggle: function() {{
+      open = !open;
+      g('ub-panel').style.display = open ? 'flex' : 'none';
+      if (open) g('ub-inp').focus();
+    }},
+    send: async function() {{
+      var inp = g('ub-inp');
+      var text = inp.value.trim();
+      if (!text) return;
+      inp.value = '';
+      msgs.push({{role:'user', content:text}});
+      addMsg('user', text); save();
+      g('ub-typing').style.display = 'block';
+      g('ub-send').disabled = true;
+      try {{
+        var r = await fetch('https://api.mistral.ai/v1/chat/completions', {{
+          method:'POST',
+          headers:{{'Authorization':'Bearer '+KEY,'Content-Type':'application/json'}},
+          body: JSON.stringify({{
+            model:'open-mistral-7b', max_tokens:1024,
+            messages:[{{role:'system',content:SYS}}].concat(msgs)
+          }})
+        }});
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        var d = await r.json();
+        var rep = (d.choices && d.choices[0]) ? d.choices[0].message.content : '❌ Réponse vide';
+        msgs.push({{role:'assistant',content:rep}});
+        addMsg('bot', rep); save();
+      }} catch(e) {{ addMsg('bot','❌ Erreur : '+e.message); }}
+      g('ub-typing').style.display = 'none';
+      g('ub-send').disabled = false;
+      g('ub-inp').focus();
+    }}
+  }};
+
+  window['UB_' + SK] = app;
+  restore();
+  if (msgs.length === 0) addMsg('bot', '👋 Bonjour\\u00a0! Je suis UniBot, ton assistant UniSchedule. Comment puis-je t\\u2019aider\\u00a0?');
+}})();
+</script>
+"""
+    st.markdown(html, unsafe_allow_html=True)

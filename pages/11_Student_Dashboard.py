@@ -71,7 +71,7 @@ def _mention_color(avg):
     return "#EF4444"
 
 # ── Onglets ────────────────────────────────────────────────────────────────────
-tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_chatbot, tab_compte = st.tabs([
+tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_compte = st.tabs([
     "📅 Mon Horaire",
     "📝 Mes TPs",
     "📊 Mes Notes",
@@ -81,7 +81,6 @@ tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages,
     "💬 Messages",
     "📈 Mon Parcours",
     "📈 Progression",
-    "🤖 UniBot",
     "⚙️ Mon Compte",
 ])
 
@@ -1347,34 +1346,27 @@ with tab_progression:
             st.dataframe(_df_sess, use_container_width=True, hide_index=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ONGLET UNIBOT — CHATBOT IA
+# UNIBOT — BULLE FLOTTANTE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_chatbot:
-    st.markdown("#### 🤖 UniBot — Ton assistant intelligent")
-    st.caption(
-        "Pose-moi n'importe quelle question sur tes notes, ton emploi du temps, "
-        "tes TPs ou l'utilisation de l'application."
-    )
-    from utils.chatbot import render_chatbot, _system_student
-    try:
-        _cb_grades   = GradeQueries.get_by_student(student["id"]) or []
-    except Exception:
-        _cb_grades = []
-    try:
-        _cb_sched = ScheduleQueries.get_by_class(class_id) or []
-    except Exception:
-        _cb_sched = []
-    try:
-        _cb_claims = GradeClaimQueries.get_by_student(student["id"]) or []
-    except Exception:
-        _cb_claims = []
-    try:
-        _cb_results = StudentResultsQueries.get_by_student(student["id"]) or []
-    except Exception:
-        _cb_results = []
-    _cb_system = _system_student(student, _cb_grades, _cb_sched,
-                                  _cb_claims, _cb_results)
-    render_chatbot(_cb_system, session_key="chatbot_student")
+from utils.chatbot import render_floating_chatbot, _system_student
+try:
+    _cb_grades = GradeQueries.get_by_student(student["id"]) or []
+except Exception:
+    _cb_grades = []
+try:
+    _cb_sched = ScheduleQueries.get_by_class(class_id) or []
+except Exception:
+    _cb_sched = []
+try:
+    _cb_claims = GradeClaimQueries.get_by_student(student["id"]) or []
+except Exception:
+    _cb_claims = []
+try:
+    _cb_results = StudentResultsQueries.get_by_student(student["id"]) or []
+except Exception:
+    _cb_results = []
+_cb_system = _system_student(student, _cb_grades, _cb_sched, _cb_claims, _cb_results)
+render_floating_chatbot(_cb_system, session_key="chatbot_student")
 
 with tab_compte:
     st.markdown("#### ⚙️ Mon Compte")
