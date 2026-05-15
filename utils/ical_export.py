@@ -18,6 +18,15 @@ _DAY_OFFSET = {
 }
 
 
+def _esc(value: str) -> str:
+    """Escape RFC 5545 special characters in text values."""
+    return (str(value)
+            .replace("\\", "\\\\")
+            .replace(";", "\\;")
+            .replace(",", "\\,")
+            .replace("\n", "\\n"))
+
+
 def generate_ical(schedules: list, class_name: str,
                   university_name: str = "") -> bytes:
     today = date.today()
@@ -26,15 +35,15 @@ def generate_ical(schedules: list, class_name: str,
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//UniSchedule//FR",
-        f"X-WR-CALNAME:{class_name} - {university_name}",
+        f"X-WR-CALNAME:{_esc(class_name)} - {_esc(university_name)}",
         "X-WR-TIMEZONE:Africa/Kinshasa",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
     ]
     for s in schedules:
         day_off = _DAY_OFFSET.get(s.get("day", "Lundi"), 0)
-        st = _to_time(s["start_time"])
-        et = _to_time(s["end_time"])
+        st = _to_time(s.get("start_time"))
+        et = _to_time(s.get("end_time"))
         vf = s.get("valid_from")
         vu = s.get("valid_until")
         slot_type = s.get("slot_type", "cours")
@@ -47,11 +56,12 @@ def generate_ical(schedules: list, class_name: str,
             summary = f"EXAMEN - {summary}"
         elif slot_type == "ferie":
             summary = f"FERIE - {summary}"
+        summary = _esc(summary)
 
         sub = s.get("substitute_name")
         prof = s.get("professor_name", "")
-        desc = f"Prof: {sub or prof}" if (sub or prof) else ""
-        location = s.get("room", "") or ""
+        desc = _esc(f"Prof: {sub or prof}") if (sub or prof) else ""
+        location = _esc(s.get("room", "") or "")
 
         if vf and vu and vf == vu:
             # Single-day event (exam/ferie) — use monday of valid_from week + day_offset

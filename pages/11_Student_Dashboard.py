@@ -153,8 +153,8 @@ with tab_edt:
                 file_name="mon_horaire.ics",
                 mime="text/calendar",
             )
-        except Exception:
-            pass
+        except Exception as _ical_err:
+            st.caption(f"⚠️ Export calendrier indisponible : {_ical_err}")
 
     # Annonces
     try:
@@ -435,6 +435,58 @@ with tab_notes:
                                 else:
                                     st.error("Le motif est obligatoire.")
 
+    # ── Historique de mes réclamations (Point 11) ────────────────────────────
+    st.divider()
+    st.markdown("#### 📋 Mes réclamations")
+    try:
+        _my_claims = GradeClaimQueries.get_by_student(student["id"]) or []
+    except Exception as _mce:
+        st.error(str(_mce)); _my_claims = []
+
+    if not _my_claims:
+        st.info("Vous n'avez déposé aucune réclamation.")
+    else:
+        _ST_ICON = {
+            "pending":  "⏳",
+            "accepted": "✅",
+            "rejected": "❌",
+        }
+        _ST_LBL = {
+            "pending":  "En attente",
+            "accepted": "Acceptée",
+            "rejected": "Rejetée",
+        }
+        _DEPT_LBL = {
+            True:  "✔️ Validée par le département",
+            False: "❌ Refusée par le département",
+            None:  "⏳ En attente de validation département",
+        }
+        for _mc in _my_claims:
+            _st_icon = _ST_ICON.get(_mc.get("status",""), "❓")
+            _st_lbl  = _ST_LBL.get(_mc.get("status",""), _mc.get("status","—"))
+            _cr_at   = _mc.get("created_at")
+            _cr_str  = _cr_at.strftime("%d/%m/%Y %H:%M") if _cr_at else "—"
+            with st.expander(
+                f"{_st_icon} {_mc.get('course_name','—')} · "
+                f"{_mc.get('exam_type','—')} · {_mc.get('session_name','—')} "
+                f"— {_st_lbl} (déposée le {_cr_str})"
+            ):
+                st.markdown(
+                    f"**Note :** {_mc.get('grade','—')}/{_mc.get('max_grade','—')}  \n"
+                    f"**Votre motif :** {_mc.get('reason','—')}"
+                )
+                if _mc.get("status") != "pending":
+                    _rev_at  = _mc.get("reviewed_at")
+                    _rev_str = _rev_at.strftime("%d/%m/%Y %H:%M") if _rev_at else "—"
+                    st.markdown(
+                        f"**Réponse du professeur :** "
+                        f"{_mc.get('professor_response') or '—'}  \n"
+                        f"*Traitée le {_rev_str}*"
+                    )
+                    _dv = _mc.get("dept_validated")
+                    st.info(_DEPT_LBL.get(_dv, "—"))
+                    if _mc.get("dept_notes"):
+                        st.caption(f"Note du département : {_mc['dept_notes']}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ONGLET 4 : COURS & DOCUMENTS

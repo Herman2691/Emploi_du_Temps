@@ -81,10 +81,7 @@ def execute_query(sql: str, params=None, fetch: str = "all"):
         with conn.cursor() as cur:
             cur.execute(sql, params)
             if fetch == "none":
-                try:
-                    return cur.fetchone()
-                except Exception:
-                    return None
+                return None
             columns = [desc[0] for desc in cur.description] if cur.description else []
             if fetch == "one":
                 row = cur.fetchone()

@@ -2027,7 +2027,7 @@ class GradeQueries:
             (grade_id,), fetch="one"
         )
         if not row or not row.get("created_at"):
-            return True
+            return False  # note introuvable → modification interdite
         from datetime import datetime, timezone
         created = row["created_at"]
         if created.tzinfo is None:
@@ -2292,6 +2292,40 @@ class GradeQueries:
               AND (g.grade::float / NULLIF(g.max_grade, 0) * 20) < 10.0
         """, (student_id, session_name))
         return {r["course_id"] for r in (rows or [])}
+
+    @staticmethod
+    def get_rattrapage_students_by_class(class_id, session_name):
+        """Étudiants en Session 2 ou Ajournés pour une classe/session donnée."""
+        return execute_query("""
+            SELECT ssr.*, s.full_name AS student_name, s.student_number, s.email
+            FROM student_session_results ssr
+            JOIN students s ON ssr.student_id = s.id
+            WHERE ssr.class_id = %s AND ssr.session_name = %s
+              AND ssr.decision IN ('Session 2', 'Ajourné')
+            ORDER BY ssr.decision, s.full_name
+        """, (class_id, session_name))
+
+    @staticmethod
+    def get_missing_grade_types(class_id, session_name):
+        """
+        Étudiants ayant des cours sans les trois types de notes
+        (Examen, Contrôle Continu, TP Noté) pour une session donnée.
+        Retourne les combinaisons étudiant/cours avec les types présents.
+        """
+        return execute_query("""
+            SELECT s.full_name AS student_name, s.student_number,
+                   c.name AS course_name,
+                   ARRAY_AGG(DISTINCT g.exam_type ORDER BY g.exam_type) AS types_saisis,
+                   COUNT(DISTINCT g.exam_type) AS nb_types
+            FROM students s
+            JOIN classes cl ON s.class_id = cl.id
+            JOIN grades  g  ON g.student_id = s.id
+            JOIN courses c  ON g.course_id  = c.id
+            WHERE cl.id = %s AND g.session_name = %s
+            GROUP BY s.id, s.full_name, s.student_number, c.id, c.name
+            HAVING COUNT(DISTINCT g.exam_type) < 3
+            ORDER BY s.full_name, c.name
+        """, (class_id, session_name))
 
 
 # ============================================================
@@ -2745,16 +2779,75 @@ class GradeClaimQueries:
                    c.id AS course_id, c.name AS course_name, c.department_id,
                    d.name AS department_name, d.faculty_id,
                    f.name AS faculty_name,
-                   s.full_name AS student_name, s.student_number
+                   s.full_name AS student_name, s.student_number,
+                   cl.name AS class_name,
+                   pr.name AS promotion_name, pr.id AS promotion_id
             FROM grade_claims gc
-            JOIN grades      g ON gc.grade_id    = g.id
-            JOIN courses     c ON g.course_id    = c.id
-            JOIN departments d ON c.department_id = d.id
-            JOIN faculties   f ON d.faculty_id   = f.id
-            JOIN students    s ON gc.student_id  = s.id
+            JOIN grades      g  ON gc.grade_id    = g.id
+            JOIN courses     c  ON g.course_id    = c.id
+            JOIN departments d  ON c.department_id = d.id
+            JOIN faculties   f  ON d.faculty_id   = f.id
+            JOIN students    s  ON gc.student_id  = s.id
+            JOIN classes     cl ON s.class_id     = cl.id
+            JOIN promotions  pr ON cl.promotion_id = pr.id
             WHERE g.professor_id = %s AND gc.status = 'pending'
-            ORDER BY gc.created_at DESC
+            ORDER BY f.name, d.name, pr.name, gc.created_at DESC
         """, (professor_id,))
+
+    @staticmethod
+    def get_all_by_professor(professor_id, limit=100):
+        """Toutes les réclamations (tous statuts) — pour l'historique du prof."""
+        return execute_query("""
+            SELECT gc.*, g.grade, g.max_grade, g.exam_type, g.session_name,
+                   c.name AS course_name, d.name AS department_name,
+                   f.name AS faculty_name,
+                   s.full_name AS student_name, s.student_number,
+                   cl.name AS class_name, pr.name AS promotion_name
+            FROM grade_claims gc
+            JOIN grades      g  ON gc.grade_id    = g.id
+            JOIN courses     c  ON g.course_id    = c.id
+            JOIN departments d  ON c.department_id = d.id
+            JOIN faculties   f  ON d.faculty_id   = f.id
+            JOIN students    s  ON gc.student_id  = s.id
+            JOIN classes     cl ON s.class_id     = cl.id
+            JOIN promotions  pr ON cl.promotion_id = pr.id
+            WHERE g.professor_id = %s AND gc.status != 'pending'
+            ORDER BY gc.updated_at DESC NULLS LAST
+            LIMIT %s
+        """, (professor_id, limit))
+
+    @staticmethod
+    def get_responded_awaiting_dept(department_id):
+        """Réclamations traitées par le prof mais pas encore validées par le département."""
+        return execute_query("""
+            SELECT gc.*, g.grade, g.max_grade, g.exam_type, g.session_name,
+                   c.name AS course_name,
+                   s.full_name AS student_name, s.student_number,
+                   cl.name AS class_name, pr.name AS promotion_name,
+                   p.name AS professor_name
+            FROM grade_claims gc
+            JOIN grades      g  ON gc.grade_id    = g.id
+            JOIN courses     c  ON g.course_id    = c.id
+            JOIN students    s  ON gc.student_id  = s.id
+            JOIN classes     cl ON s.class_id     = cl.id
+            JOIN promotions  pr ON cl.promotion_id = pr.id
+            JOIN professors  p  ON g.professor_id = p.id
+            JOIN professor_faculty_affiliations pfa ON pfa.professor_id = p.id
+            JOIN departments d  ON d.faculty_id   = pfa.faculty_id
+            WHERE d.id = %s
+              AND gc.status IN ('accepted', 'rejected')
+              AND gc.dept_validated IS NULL
+            ORDER BY gc.updated_at DESC NULLS LAST
+        """, (department_id,))
+
+    @staticmethod
+    def validate_by_dept(claim_id, validated: bool, dept_user_id: int, notes: str = None):
+        execute_query("""
+            UPDATE grade_claims
+            SET dept_validated=%s, dept_validated_by=%s,
+                dept_validated_at=NOW(), dept_notes=%s
+            WHERE id=%s
+        """, (validated, dept_user_id, notes or None, claim_id), fetch="none")
 
     @staticmethod
     def get_pending_by_department(department_id):
@@ -3030,6 +3123,12 @@ class BulletinQueries:
             WHERE pr.department_id = %s
             ORDER BY b.academic_year DESC, cl.name, b.session_name
         """, (department_id,))
+
+    @staticmethod
+    def update_pdf(bulletin_id: int, pdf_url: str):
+        execute_query("""
+            UPDATE bulletins SET pdf_url=%s, updated_at=NOW() WHERE id=%s
+        """, (pdf_url, bulletin_id), fetch="none")
 
 
 # ============================================================

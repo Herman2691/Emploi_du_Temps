@@ -735,9 +735,43 @@ with tab_notes:
                 # ── Section 1 : Saisie / mise à jour groupée ──────────────────
                 st.markdown(f"**{len(students)} étudiant(s) — {notes_course['name']}**")
 
+                # Point 6 : Pagination de la liste des étudiants
+                _PAGE_SZ_N = 15
+                _pg_n_key  = f"notes_pg_{notes_class['id']}_{notes_course['id']}"
+                if _pg_n_key not in st.session_state:
+                    st.session_state[_pg_n_key] = 0
+                _n_pgs_n  = max(1, (len(students) + _PAGE_SZ_N - 1) // _PAGE_SZ_N)
+                _cur_pg_n = min(st.session_state[_pg_n_key], _n_pgs_n - 1)
+                _stu_page = students[_cur_pg_n * _PAGE_SZ_N:(_cur_pg_n + 1) * _PAGE_SZ_N]
+                if len(students) > _PAGE_SZ_N:
+                    _pnc1, _pnc2, _pnc3 = st.columns([1, 6, 1])
+                    with _pnc1:
+                        if st.button("◀", disabled=_cur_pg_n == 0,
+                                     key="notes_pg_prev", use_container_width=True):
+                            st.session_state[_pg_n_key] = _cur_pg_n - 1; st.rerun()
+                    with _pnc2:
+                        st.caption(
+                            f"Page **{_cur_pg_n + 1} / {_n_pgs_n}** "
+                            f"— {len(students)} étudiants au total"
+                        )
+                    with _pnc3:
+                        if st.button("▶", disabled=_cur_pg_n == _n_pgs_n - 1,
+                                     key="notes_pg_next", use_container_width=True):
+                            st.session_state[_pg_n_key] = _cur_pg_n + 1; st.rerun()
+
+                # Point 1 : Note maximale HORS formulaire → synchronisation immédiate
+                _mx_key   = f"notes_max_{notes_class['id']}_{notes_course['id']}"
+                max_grade = st.number_input(
+                    "Note maximale",
+                    min_value=1.0, max_value=100.0,
+                    value=float(st.session_state.get(_mx_key, 20.0)),
+                    step=1.0,
+                    key=f"notes_max_input_{notes_class['id']}",
+                    help="Changez ici — les spinners ci-dessous se mettent à jour automatiquement"
+                )
+                st.session_state[_mx_key] = max_grade
+
                 with st.form("publish_notes"):
-                    max_grade = st.number_input("Note maximale", min_value=1.0,
-                                                max_value=100.0, value=20.0, step=1.0)
                     _bulk_motif = st.text_input(
                         "Motif de saisie (obligatoire si modification d'une note existante)",
                         placeholder="ex: Saisie initiale des résultats",
@@ -746,9 +780,10 @@ with tab_notes:
                     note_inputs   = {}
                     comment_inputs = {}
 
-                    for stu in students:
+                    for stu in _stu_page:
                         _ex = existing_grades.get(stu["id"])
-                        _default_g = float(_ex["grade"]) if _ex else 0.0
+                        _default_g = min(float(_ex["grade"]) if _ex else 0.0,
+                                         float(max_grade))
                         _nval_icon = " ⚠️" if stu["id"] in _nval_set else ""
                         c_n, c_g, c_c = st.columns([3, 1, 2])
                         c_n.markdown(
@@ -772,54 +807,69 @@ with tab_notes:
                         )
 
                     if st.form_submit_button("💾 Enregistrer les notes", type="primary"):
-                        _has_existing = any(
-                            stu["id"] in existing_grades for stu in students
-                        )
-                        if _has_existing and not _bulk_motif.strip():
-                            st.error("Le motif est obligatoire pour modifier des notes existantes.")
+                        # Point 2 : Validation note > note maximale
+                        _over_max = [sid for sid, g in note_inputs.items()
+                                     if g > max_grade]
+                        if _over_max:
+                            st.error(
+                                f"❌ {len(_over_max)} note(s) supérieure(s) à la note "
+                                f"maximale ({max_grade:.0f}). Corrigez avant d'enregistrer."
+                            )
                         else:
-                            try:
-                                session_val = notes_session
-                                for stu_id, grade_val in note_inputs.items():
-                                    GradeQueries.upsert(
-                                        student_id=stu_id,
-                                        course_id=notes_course["id"],
-                                        professor_id=prof_id,
-                                        grade=grade_val,
-                                        max_grade=max_grade,
-                                        exam_type=exam_type,
-                                        comment=comment_inputs.get(stu_id) or None,
-                                        session_name=session_val,
-                                        motif=_bulk_motif.strip() or "Saisie initiale",
-                                    )
-                                st.success(
-                                    f"✅ Notes enregistrées pour {len(students)} étudiant(s) !"
-                                )
+                            _has_existing = any(
+                                stu["id"] in existing_grades for stu in _stu_page
+                            )
+                            if _has_existing and not _bulk_motif.strip():
+                                st.error("Le motif est obligatoire pour modifier des notes existantes.")
+                            else:
                                 try:
-                                    from utils.notifications import notify_grade
-                                    from db.queries import UniversityQueries as _UQ
-                                    _uni = _UQ.get_by_id(user.get("university_id"))
-                                    _uni_name = _uni["name"] if _uni else "UniSchedule"
-                                    _notif_c = 0
-                                    for stu_obj in students:
-                                        if stu_obj.get("email"):
-                                            notify_grade(
-                                                student_email=stu_obj["email"],
-                                                student_name=stu_obj["full_name"],
-                                                course_name=notes_course["name"],
-                                                grade=note_inputs.get(stu_obj["id"], 0),
-                                                max_grade=max_grade,
-                                                exam_type=exam_type,
-                                                comment=comment_inputs.get(stu_obj["id"]) or None,
-                                                university_name=_uni_name,
-                                            )
-                                            _notif_c += 1
-                                    if _notif_c > 0:
-                                        st.info(f"📧 {_notif_c} notification(s) envoyée(s).")
-                                except Exception:
-                                    pass
-                            except Exception as e:
-                                st.error(f"Erreur : {e}")
+                                    session_val = notes_session
+                                    for stu_id, grade_val in note_inputs.items():
+                                        GradeQueries.upsert(
+                                            student_id=stu_id,
+                                            course_id=notes_course["id"],
+                                            professor_id=prof_id,
+                                            grade=grade_val,
+                                            max_grade=max_grade,
+                                            exam_type=exam_type,
+                                            comment=comment_inputs.get(stu_id) or None,
+                                            session_name=session_val,
+                                            motif=_bulk_motif.strip() or "Saisie initiale",
+                                        )
+                                    st.success(
+                                        f"✅ Notes enregistrées pour {len(note_inputs)} étudiant(s) !"
+                                    )
+                                    # Point 4 : Réinitialisation du formulaire après enregistrement
+                                    for _sid in note_inputs:
+                                        st.session_state.pop(f"note_{_sid}", None)
+                                        st.session_state.pop(f"cmnt_{_sid}", None)
+                                    st.session_state[_mx_key] = 20.0
+                                    try:
+                                        from utils.notifications import notify_grade
+                                        from db.queries import UniversityQueries as _UQ
+                                        _uni = _UQ.get_by_id(user.get("university_id"))
+                                        _uni_name = _uni["name"] if _uni else "UniSchedule"
+                                        _notif_c = 0
+                                        for stu_obj in _stu_page:
+                                            if stu_obj.get("email"):
+                                                notify_grade(
+                                                    student_email=stu_obj["email"],
+                                                    student_name=stu_obj["full_name"],
+                                                    course_name=notes_course["name"],
+                                                    grade=note_inputs.get(stu_obj["id"], 0),
+                                                    max_grade=max_grade,
+                                                    exam_type=exam_type,
+                                                    comment=comment_inputs.get(stu_obj["id"]) or None,
+                                                    university_name=_uni_name,
+                                                )
+                                                _notif_c += 1
+                                        if _notif_c > 0:
+                                            st.info(f"📧 {_notif_c} notification(s) envoyée(s).")
+                                    except Exception:
+                                        pass
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erreur : {e}")
 
                 # ── Section 1b : Soumettre les notes au département ───────────
                 st.divider()
@@ -901,6 +951,34 @@ with tab_notes:
                     )
                 elif _nb_publie > 0 and _nb_brouillon == 0:
                     st.success("✅ Toutes les notes sont publiées.")
+
+                # ── Section 1c : Étudiants en rattrapage (Point 8) ──────────
+                try:
+                    _rattr = GradeQueries.get_rattrapage_students_by_class(
+                        notes_class["id"], notes_session
+                    ) or []
+                except Exception:
+                    _rattr = []
+                if _rattr:
+                    st.divider()
+                    with st.expander(
+                        f"⚠️ {len(_rattr)} étudiant(s) en Session 2 / Ajourné "
+                        f"— session '{notes_session}'"
+                    ):
+                        st.caption(
+                            "Ces étudiants ont une décision de Session 2 ou Ajourné "
+                            "dans la session en cours. Vérifiez leurs notes."
+                        )
+                        for _r in _rattr:
+                            _dec_icon = "🟡" if _r.get("decision") == "Session 2" else "🔴"
+                            st.markdown(
+                                f"{_dec_icon} **{_r['full_name']}** "
+                                f"<span style='color:#94A3B8;font-size:0.8rem'>"
+                                f"({_r.get('student_number','—')})</span> — "
+                                f"Décision : *{_r.get('decision','—')}* · "
+                                f"Moyenne : {_r.get('average','—')}",
+                                unsafe_allow_html=True,
+                            )
 
                 # ── Section 2 : Modification individuelle avec règle 48h ───────
                 if existing_grades:
@@ -1522,7 +1600,7 @@ with tab_claims:
                     seen.add(item[key_id])
             return result
 
-        _rc_cf, _rc_cd, _rc_cc = st.columns(3)
+        _rc_cf, _rc_cd, _rc_cp, _rc_cc = st.columns(4)
         with _rc_cf:
             _facs_rc = _unique(_claims, "faculty_id", "faculty_name")
             _fac_rc = st.selectbox(
@@ -1543,6 +1621,16 @@ with tab_claims:
             )
         _claims_f = [c for c in _claims_f if not _dept_rc or c.get("department_id") == _dept_rc["id"]]
 
+        with _rc_cp:
+            _promos_rc = _unique(_claims_f, "promotion_id", "promotion_name")
+            _promo_rc = st.selectbox(
+                "Promotion", options=_promos_rc,
+                format_func=lambda p: p["name"],
+                index=None, placeholder="— Toutes —",
+                key="rc_promo_sel"
+            )
+        _claims_f = [c for c in _claims_f if not _promo_rc or c.get("promotion_id") == _promo_rc["id"]]
+
         with _rc_cc:
             _courses_rc = _unique(_claims_f, "course_id", "course_name")
             _course_rc = st.selectbox(
@@ -1556,10 +1644,16 @@ with tab_claims:
         st.metric("Réclamations en attente", len(_claims_f))
         st.divider()
         for _cl in _claims_f:
+            _cl_promo = _cl.get("promotion_name", "")
+            _cl_class = _cl.get("class_name", "")
+            _cl_dept  = _cl.get("department_name", "")
+            _cl_breadcrumb = " · ".join(filter(None, [_cl_dept, _cl_promo, _cl_class]))
             with st.expander(
                 f"⚠️ {_cl['student_name']} — {_cl['course_name']} "
                 f"· {_cl['exam_type']} · {_cl['session_name']}"
+                + (f"  |  {_cl_breadcrumb}" if _cl_breadcrumb else "")
             ):
+                st.caption(_cl_breadcrumb)
                 st.markdown(
                     f"**Note actuelle :** {_cl['grade']:.1f}/{_cl['max_grade']:.0f}  \n"
                     f"**Raison :** {_cl['reason']}"
@@ -1585,3 +1679,49 @@ with tab_claims:
                                 st.rerun()
                             except Exception as _e:
                                 st.error(f"Erreur : {_e}")
+
+    # ── Historique des réclamations traitées (Point 13) ───────────────────────
+    st.divider()
+    st.markdown("#### 📋 Historique des réclamations traitées")
+    try:
+        _hist_claims = GradeClaimQueries.get_all_by_professor(prof_id)
+    except Exception as _hce:
+        st.error(str(_hce)); _hist_claims = []
+
+    if not _hist_claims:
+        st.info("Aucune réclamation traitée pour l'instant.")
+    else:
+        _STATUS_CLAIM_LBL = {
+            "accepted": "✅ Acceptée",
+            "rejected": "❌ Rejetée",
+        }
+        _DEPT_LBL = {
+            True:  "✔️ Validée par le département",
+            False: "❌ Refusée par le département",
+            None:  "⏳ En attente de validation département",
+        }
+        for _hcl in _hist_claims:
+            _dept_val     = _hcl.get("dept_validated")
+            _dept_icon    = "✔️" if _dept_val is True else ("❌" if _dept_val is False else "⏳")
+            _status_lbl   = _STATUS_CLAIM_LBL.get(_hcl.get("status", ""), _hcl.get("status","—"))
+            _resolved_at  = _hcl.get("reviewed_at")
+            _resolved_str = _resolved_at.strftime("%d/%m/%Y %H:%M") if _resolved_at else "—"
+            with st.expander(
+                f"{_dept_icon} {_hcl.get('student_name','—')} — "
+                f"{_hcl.get('course_name','—')} · {_hcl.get('exam_type','—')} "
+                f"· {_hcl.get('session_name','—')} — {_status_lbl} le {_resolved_str}"
+            ):
+                _hcl_promo = _hcl.get("promotion_name","")
+                _hcl_class = _hcl.get("class_name","")
+                _hcl_dept  = _hcl.get("department_name","")
+                _hcl_bc    = " · ".join(filter(None, [_hcl_dept, _hcl_promo, _hcl_class]))
+                if _hcl_bc:
+                    st.caption(_hcl_bc)
+                st.markdown(
+                    f"**Note :** {_hcl.get('grade','—')}/{_hcl.get('max_grade','—')}  \n"
+                    f"**Motif étudiant :** {_hcl.get('reason','—')}  \n"
+                    f"**Votre réponse :** {_hcl.get('professor_response') or '—'}"
+                )
+                st.info(_DEPT_LBL.get(_dept_val, "—"))
+                if _hcl.get("dept_notes"):
+                    st.caption(f"Note du département : {_hcl['dept_notes']}")

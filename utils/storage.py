@@ -9,6 +9,9 @@ TP_SUBMISSIONS_BUCKET = "tp-submissions"
 ANNOUNCEMENTS_BUCKET  = "announcements"
 UNIVERSITY_LOGOS_BUCKET = "university-logos"
 
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+
+_ALLOWED_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 _MIME_MAP   = {
     ".pdf":  "application/pdf",
@@ -35,12 +38,18 @@ def upload_file(file_bytes: bytes, original_name: str,
     """Sauvegarde un fichier (PDF ou image) localement.
     Conserve l'extension d'origine. Retourne (stored_path, stored_path).
     """
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise ValueError(f"Fichier trop volumineux (max {MAX_UPLOAD_BYTES // 1024 // 1024} Mo).")
+
+    ext = os.path.splitext(original_name.lower())[1] or ".bin"
+    if ext not in _ALLOWED_EXTS:
+        raise ValueError(f"Type de fichier non autorisé : {ext}.")
+
     parts = [UPLOADS_DIR, bucket]
     if folder:
         parts.append(folder)
     os.makedirs(os.path.join(*parts), exist_ok=True)
 
-    ext         = os.path.splitext(original_name.lower())[1] or ".bin"
     filename    = f"{uuid.uuid4()}{ext}"
     stored_path = "/".join(filter(None, [bucket, folder, filename]))
     full_path   = os.path.join(UPLOADS_DIR, *stored_path.split("/"))

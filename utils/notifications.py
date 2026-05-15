@@ -1,8 +1,11 @@
 # utils/notifications.py
+import logging
 import smtplib
 import streamlit as st
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+logger = logging.getLogger(__name__)
 
 
 # ── Config SMTP (secrets.toml section [email]) ───────────────────────────────
@@ -41,8 +44,8 @@ def _send(addresses: list, subject: str, html: str) -> int:
                 msg.attach(MIMEText(html, "html", "utf-8"))
                 srv.sendmail(cfg["user"], addr, msg.as_string())
                 sent += 1
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("SMTP error: %s", exc, exc_info=True)
     return sent
 
 

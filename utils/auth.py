@@ -260,7 +260,7 @@ def register_student(student_number: str, university_id: int,
         StudentQueries.create(
             student_number=student_number,
             full_name=full_name,
-            email=None,
+            email=registry.get("email"),
             password_hash=pwd_hash,
             class_id=registry.get("class_id"),
             university_id=university_id,

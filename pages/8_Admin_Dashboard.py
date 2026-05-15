@@ -190,14 +190,17 @@ def render_super_admin():
                             st.success(f"✅ '{uni['name']}' réactivée !"); st.rerun()
                         except Exception as e:
                             st.error(str(e))
-                    if st.button("🗑️ Supprimer définitivement", key=f"delete_uni_{uni['id']}"):
-                        try:
-                            from db.connection import execute_query
-                            execute_query("DELETE FROM universities WHERE id=%s",
-                                          (uni["id"],), fetch="none")
-                            st.success("Supprimée."); st.rerun()
-                        except Exception as e:
-                            st.error(str(e))
+                    _ck_del = f"confirm_del_inact_{uni['id']}"
+                    if st.checkbox("Je confirme la suppression définitive", key=_ck_del):
+                        if st.button("🗑️ Supprimer définitivement", key=f"delete_uni_{uni['id']}",
+                                     type="primary", use_container_width=True):
+                            try:
+                                from db.connection import execute_query
+                                execute_query("DELETE FROM universities WHERE id=%s",
+                                              (uni["id"],), fetch="none")
+                                st.success("Supprimée."); st.rerun()
+                            except Exception as e:
+                                st.error(str(e))
 
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 2 : COMPTES ADMINISTRATEURS — Créer / Modifier / Désactiver
@@ -271,63 +274,76 @@ def render_super_admin():
             st.divider()
 
             if active_admins:
+                # Point 7 : Grouper par université puis par rôle
                 st.markdown("#### ✅ Comptes actifs")
-                for adm in _paginate(active_admins, "pg_active_admins"):
-                    role_icon = {"admin_universite":"🔵","admin_faculte":"🟢","admin_departement":"🟡"}.get(adm["role"],"⚪")
-                    uni_label = adm.get("university_name") or "—"
-                    with st.expander(f"{role_icon} {adm['name']} — {ROLE_LABELS.get(adm['role'], adm['role'])} · {uni_label}"):
+                _admins_by_uni = {}
+                for _a in active_admins:
+                    _uni_key = _a.get("university_name") or "— Sans université —"
+                    _admins_by_uni.setdefault(_uni_key, []).append(_a)
+                for _uni_grp, _adms_grp in sorted(_admins_by_uni.items()):
+                    st.markdown(f"**🏛️ {_uni_grp}**")
+                    _ROLE_ORDER = ["admin_universite", "admin_faculte", "admin_departement"]
+                    _adms_grp_sorted = sorted(
+                        _adms_grp,
+                        key=lambda _x: (_ROLE_ORDER.index(_x["role"])
+                                        if _x["role"] in _ROLE_ORDER else 99,
+                                        _x["name"])
+                    )
+                    for adm in _paginate(_adms_grp_sorted, f"pg_active_admins_{_uni_grp}"):
+                        role_icon = {"admin_universite":"🔵","admin_faculte":"🟢","admin_departement":"🟡"}.get(adm["role"],"⚪")
+                        uni_label = adm.get("university_name") or "—"
+                        with st.expander(f"{role_icon} {adm['name']} — {ROLE_LABELS.get(adm['role'], adm['role'])} · {uni_label}"):
+                            col_edit, col_pwd, col_action = st.columns([3, 2, 1])
 
-                        col_edit, col_pwd, col_action = st.columns([3, 2, 1])
-
-                        # Modifier infos
-                        with col_edit:
-                            st.markdown("**✏️ Modifier les infos**")
-                            with st.form(f"edit_adm_{adm['id']}"):
-                                en = st.text_input("Nom",   value=adm["name"])
-                                ee = st.text_input("Email", value=adm["email"])
-                                er = st.selectbox("Rôle", [
-                                    "admin_universite","admin_faculte","admin_departement"
-                                ], index=["admin_universite","admin_faculte","admin_departement"].index(adm["role"])
-                                   if adm["role"] in ["admin_universite","admin_faculte","admin_departement"] else 0,
-                                   format_func=lambda r: ROLE_LABELS.get(r, r))
-                                eu = st.selectbox("Université", options=unis or [],
-                                                  format_func=lambda u: u["name"],
-                                                  index=next((i for i,u in enumerate(unis or []) if u["id"]==adm.get("university_id")),0))
-                                if st.form_submit_button("💾 Sauvegarder", type="primary"):
-                                    try:
-                                        execute_query(
-                                            "UPDATE users SET name=%s, email=%s, role=%s, university_id=%s WHERE id=%s",
-                                            (en.strip(), ee.strip().lower(), er,
-                                             eu["id"] if eu else None, adm["id"]), fetch="none"
-                                        )
-                                        st.success("✅ Compte mis à jour !"); st.rerun()
-                                    except Exception as e:
-                                        st.error(str(e))
-
-                        # Réinitialiser mot de passe
-                        with col_pwd:
-                            st.markdown("**🔑 Nouveau mot de passe**")
-                            with st.form(f"pwd_adm_{adm['id']}"):
-                                new_p  = st.text_input("Nouveau MDP *", type="password")
-                                new_p2 = st.text_input("Confirmer *",   type="password")
-                                if st.form_submit_button("Réinitialiser"):
-                                    if not new_p or len(new_p) < 8:
-                                        st.error("Min 8 caractères.")
-                                    elif new_p != new_p2:
-                                        st.error("Les mots de passe ne correspondent pas.")
-                                    else:
+                            # Modifier infos
+                            with col_edit:
+                                st.markdown("**✏️ Modifier les infos**")
+                                with st.form(f"edit_adm_{adm['id']}"):
+                                    en = st.text_input("Nom",   value=adm["name"])
+                                    ee = st.text_input("Email", value=adm["email"])
+                                    er = st.selectbox("Rôle", [
+                                        "admin_universite","admin_faculte","admin_departement"
+                                    ], index=["admin_universite","admin_faculte","admin_departement"].index(adm["role"])
+                                       if adm["role"] in ["admin_universite","admin_faculte","admin_departement"] else 0,
+                                       format_func=lambda r: ROLE_LABELS.get(r, r))
+                                    eu = st.selectbox("Université", options=unis or [],
+                                                      format_func=lambda u: u["name"],
+                                                      index=next((i for i,u in enumerate(unis or []) if u["id"]==adm.get("university_id")),0))
+                                    if st.form_submit_button("💾 Sauvegarder", type="primary"):
                                         try:
-                                            UserQueries.update_password(adm["id"], hash_password(new_p))
-                                            st.success("✅ Mot de passe mis à jour !")
+                                            execute_query(
+                                                "UPDATE users SET name=%s, email=%s, role=%s, university_id=%s WHERE id=%s",
+                                                (en.strip(), ee.strip().lower(), er,
+                                                 eu["id"] if eu else None, adm["id"]), fetch="none"
+                                            )
+                                            st.success("✅ Compte mis à jour !"); st.rerun()
                                         except Exception as e:
                                             st.error(str(e))
 
-                        # Désactiver
-                        with col_action:
-                            st.markdown("**⛔ Actions**")
-                            if st.button("⛔ Désactiver", key=f"deact_adm_{adm['id']}"):
-                                UserQueries.deactivate(adm["id"])
-                                st.warning(f"Compte de '{adm['name']}' désactivé."); st.rerun()
+                            # Réinitialiser mot de passe
+                            with col_pwd:
+                                st.markdown("**🔑 Nouveau mot de passe**")
+                                with st.form(f"pwd_adm_{adm['id']}"):
+                                    new_p  = st.text_input("Nouveau MDP *", type="password")
+                                    new_p2 = st.text_input("Confirmer *",   type="password")
+                                    if st.form_submit_button("Réinitialiser"):
+                                        if not new_p or len(new_p) < 8:
+                                            st.error("Min 8 caractères.")
+                                        elif new_p != new_p2:
+                                            st.error("Les mots de passe ne correspondent pas.")
+                                        else:
+                                            try:
+                                                UserQueries.update_password(adm["id"], hash_password(new_p))
+                                                st.success("✅ Mot de passe mis à jour !")
+                                            except Exception as e:
+                                                st.error(str(e))
+
+                            # Désactiver
+                            with col_action:
+                                st.markdown("**⛔ Actions**")
+                                if st.button("⛔ Désactiver", key=f"deact_adm_{adm['id']}"):
+                                    UserQueries.deactivate(adm["id"])
+                                    st.warning(f"Compte de '{adm['name']}' désactivé."); st.rerun()
 
             if inactive_admins:
                 st.markdown("#### 🔒 Comptes désactivés")
@@ -3678,6 +3694,25 @@ def render_admin_departement(dept_id_override=None):
                             if _all_publie:
                                 st.success("✅ Session publiée")
                             elif (_nb_valide_a + _nb_soumis_a + _nb_brouillon_a) > 0:
+                                # Point 3 : avertissement notes manquantes
+                                try:
+                                    _missing = _GQR.get_missing_grade_types(
+                                        class_res["id"], active_session_res
+                                    ) or []
+                                except Exception:
+                                    _missing = []
+                                if _missing:
+                                    with st.expander(
+                                        f"⚠️ {len(_missing)} combinaison(s) étudiant/cours "
+                                        f"avec des types de notes manquants"
+                                    ):
+                                        for _mg in _missing:
+                                            st.caption(
+                                                f"**{_mg.get('student_name','—')}** · "
+                                                f"{_mg.get('course_name','—')} — "
+                                                f"Types saisis : {', '.join(_mg.get('types_saisis') or [])} "
+                                                f"({_mg.get('nb_types',0)}/3)"
+                                            )
                                 if st.button("📢 Publier les résultats",
                                              type="primary",
                                              key="res_publish_btn"):
@@ -4665,6 +4700,74 @@ def render_admin_departement(dept_id_override=None):
                         "Cette vue vous permet de superviser les réclamations ouvertes."
                     )
 
+        # ── Point 12 : Validation département des réponses prof ───────────────
+        st.divider()
+        st.markdown("#### ✔️ Valider les réponses des professeurs")
+        st.caption(
+            "Réclamations traitées par les professeurs, en attente de votre validation "
+            "en tant que département."
+        )
+        try:
+            _resp_claims = GradeClaimQueries.get_responded_awaiting_dept(dept_id)
+        except Exception as _rce:
+            st.error(f"Erreur : {_rce}"); _resp_claims = []
+
+        if not _resp_claims:
+            st.success("✅ Aucune réponse en attente de validation.")
+        else:
+            st.metric("Réponses à valider", len(_resp_claims))
+            st.divider()
+            for _rc in _resp_claims:
+                _rc_at     = _rc.get("updated_at") or _rc.get("created_at")
+                _rc_at_str = _rc_at.strftime("%d/%m/%Y %H:%M") if _rc_at else "—"
+                _rc_status_lbl = "✅ Acceptée" if _rc.get("status") == "accepted" else "❌ Rejetée"
+                with st.expander(
+                    f"🔍 {_rc.get('student_name','—')} · {_rc.get('course_name','—')} "
+                    f"· {_rc.get('exam_type','—')} — Prof : {_rc.get('professor_name','—')} "
+                    f"— {_rc_status_lbl}"
+                ):
+                    _rv1, _rv2 = st.columns(2)
+                    with _rv1:
+                        st.markdown("**Réclamation**")
+                        st.caption(
+                            f"Étudiant : {_rc.get('student_name','—')} "
+                            f"({_rc.get('student_number','—')})"
+                        )
+                        st.caption(f"Classe : {_rc.get('class_name','—')}")
+                        st.caption(
+                            f"Note : {_rc.get('grade','—')}/{_rc.get('max_grade','—')} "
+                            f"· {_rc.get('exam_type','—')} · {_rc.get('session_name','—')}"
+                        )
+                        st.caption(f"Motif : {_rc.get('reason','—')}")
+                    with _rv2:
+                        st.markdown("**Réponse du professeur**")
+                        st.caption(f"Prof : {_rc.get('professor_name','—')}")
+                        st.info(
+                            f"{_rc_status_lbl}  \n"
+                            f"{_rc.get('professor_response') or '—'}"
+                        )
+                        st.caption(f"Traitée le : {_rc_at_str}")
+
+                    with st.form(f"dept_validate_{_rc['id']}"):
+                        _dv_decision = st.radio(
+                            "Décision du département",
+                            [True, False],
+                            format_func=lambda v: "✔️ Valider la réponse" if v
+                                                  else "❌ Refuser la réponse",
+                            horizontal=True,
+                        )
+                        _dv_notes = st.text_area("Notes internes (optionnel)")
+                        if st.form_submit_button("Enregistrer", type="primary"):
+                            try:
+                                GradeClaimQueries.validate_by_dept(
+                                    _rc["id"], _dv_decision,
+                                    user["id"], _dv_notes.strip() or None
+                                )
+                                st.success("✅ Validation enregistrée !")
+                                st.rerun()
+                            except Exception as _dve:
+                                st.error(f"Erreur : {_dve}")
+
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 11 : BULLETINS
     # ══════════════════════════════════════════════════════════════════════════
@@ -4785,6 +4888,60 @@ def render_admin_departement(dept_id_override=None):
                                 "Aucune décision calculée — utilisez le bouton "
                                 "🧮 dans l'onglet Résultats."
                             )
+
+                    # Point 9 : Import PDF bulletin ───────────────────────────
+                    st.divider()
+                    st.markdown("**📎 Bulletin PDF**")
+                    _bul_pdf = _bul.get("pdf_url")
+                    if _bul_pdf:
+                        from utils.storage import get_file_bytes as _gfb, get_file_base64 as _gfb64
+                        _pdf_data = _gfb(_bul_pdf)
+                        if _pdf_data:
+                            _pdf_b64 = _gfb64(_bul_pdf)
+                            if _pdf_b64:
+                                st.markdown(
+                                    f'<iframe src="{_pdf_b64}" '
+                                    f'width="100%" height="400" '
+                                    f'style="border:1px solid #e2e8f0;border-radius:8px">'
+                                    f'</iframe>',
+                                    unsafe_allow_html=True,
+                                )
+                            st.download_button(
+                                "⬇️ Télécharger le PDF",
+                                data=_pdf_data,
+                                file_name=f"bulletin_{_bul.get('class_name','')}"
+                                          f"_{_bul.get('session_name','')}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_bul_pdf_{_bul['id']}",
+                            )
+                        else:
+                            st.caption("⚠️ Fichier PDF introuvable sur le serveur.")
+
+                    with st.form(f"upload_bul_pdf_{_bul['id']}"):
+                        _pdf_file = st.file_uploader(
+                            "Importer un PDF de bulletin" if not _bul_pdf
+                            else "Remplacer le PDF existant",
+                            type=["pdf"],
+                            key=f"pdf_uploader_{_bul['id']}",
+                        )
+                        if st.form_submit_button(
+                            "💾 Enregistrer le PDF", type="primary"
+                        ):
+                            if not _pdf_file:
+                                st.error("Sélectionnez un fichier PDF.")
+                            else:
+                                try:
+                                    from utils.storage import upload_file as _uf_bul
+                                    _stored, _ = _uf_bul(
+                                        _pdf_file.read(), _pdf_file.name,
+                                        "bulletins",
+                                        folder=f"dept_{dept_id}",
+                                    )
+                                    _BQTAB.update_pdf(_bul["id"], _stored)
+                                    st.success("✅ PDF importé avec succès !")
+                                    st.rerun()
+                                except Exception as _pe:
+                                    st.error(f"Erreur : {_pe}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # ONGLET 16 : ANNÉES ACADÉMIQUES
