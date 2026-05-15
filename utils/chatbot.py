@@ -8,23 +8,19 @@ _MISTRAL_URL   = "https://api.mistral.ai/v1/chat/completions"
 _MISTRAL_MODEL = "open-mistral-7b"
 
 
+_MISTRAL_KEY = "tTWI1SmLPtS2IhMuPJJfj3PvTvfYXUUZ"
+
+
 def _get_api_key() -> str:
     try:
         return st.secrets["mistral"]["api_key"]
-    except KeyError:
-        pass
     except Exception:
         pass
-    # Essai accès attribut (alternative Streamlit)
     try:
         return st.secrets.mistral.api_key
     except Exception:
         pass
-    raise ValueError(
-        "Clé API Mistral manquante. Ajoutez [mistral] api_key = '...' "
-        "dans .streamlit/secrets.toml  —  ou dans Settings > Secrets "
-        "si l'app est déployée sur Streamlit Cloud."
-    )
+    return _MISTRAL_KEY
 
 
 def _call_mistral(system_prompt: str, messages: list) -> str:
