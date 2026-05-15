@@ -1,5 +1,6 @@
 # utils/chatbot.py — Chatbot IA UniBot basé sur Mistral AI
 import streamlit as st
+import streamlit.components.v1 as _components
 import requests
 import json
 from datetime import datetime
@@ -264,171 +265,144 @@ def render_chatbot(system_prompt: str, session_key: str = "chatbot_messages"):
 # ── Bulle flottante ───────────────────────────────────────────────────────────
 
 def render_floating_chatbot(system_prompt: str, session_key: str = "chatbot_float"):
-    """Injecte une bulle de chat flottante via HTML/CSS/JS dans la page Streamlit."""
-    try:
-        api_key = _get_api_key()
-    except ValueError as e:
-        st.warning(str(e))
-        return
+    """Bulle de chat flottante — injectée dans la page parente via components.v1.html."""
+    api_key = _get_api_key()
+    sk = session_key.replace("-", "_")
 
-    sys_json = json.dumps(system_prompt)
-    key_json = json.dumps(api_key)
-    sk       = session_key.replace("-", "_")   # CSS-safe id suffix
-
-    html = f"""
-<style>
-#ub-btn-{sk} {{
-    position:fixed; bottom:80px; right:24px;
-    width:58px; height:58px; border-radius:50%;
-    background:linear-gradient(135deg,#4F46E5,#7C3AED);
-    color:white; font-size:26px; border:none; cursor:pointer;
-    z-index:2147483647;
-    box-shadow:0 4px 20px rgba(79,70,229,.55);
-    display:flex; align-items:center; justify-content:center;
-    transition:transform .2s,box-shadow .2s;
-}}
-#ub-btn-{sk}:hover {{ transform:scale(1.1); box-shadow:0 6px 26px rgba(79,70,229,.75); }}
-#ub-panel-{sk} {{
-    position:fixed; bottom:150px; right:24px;
-    width:350px; height:510px;
-    background:#fff; border-radius:20px;
-    box-shadow:0 16px 48px rgba(0,0,0,.22);
-    display:none; flex-direction:column;
-    z-index:2147483646; overflow:hidden;
-    border:1px solid #E2E8F0;
-}}
-#ub-head-{sk} {{
-    background:linear-gradient(135deg,#4F46E5,#7C3AED);
-    color:#fff; padding:12px 14px;
-    display:flex; align-items:center; gap:10px; flex-shrink:0;
-}}
-#ub-msgs-{sk} {{
-    flex:1; overflow-y:auto; padding:10px;
-    display:flex; flex-direction:column; gap:7px;
-    background:#F8FAFC;
-}}
-.ub-msg-{sk} {{
-    padding:9px 13px; border-radius:14px;
-    max-width:84%; font-size:13px; line-height:1.5; word-wrap:break-word;
-}}
-.ub-user-{sk} {{
-    background:#4F46E5; color:#fff;
-    align-self:flex-end; border-bottom-right-radius:3px;
-}}
-.ub-bot-{sk} {{
-    background:#fff; color:#1E293B;
-    align-self:flex-start; border-bottom-left-radius:3px;
-    box-shadow:0 1px 4px rgba(0,0,0,.08);
-}}
-#ub-typing-{sk} {{
-    color:#94A3B8; font-size:12px; padding:3px 10px;
-    background:#F8FAFC; flex-shrink:0; display:none;
-}}
-#ub-foot-{sk} {{
-    display:flex; gap:7px; padding:9px 11px;
-    border-top:1px solid #E2E8F0; background:#fff; flex-shrink:0;
-    align-items:center;
-}}
-#ub-inp-{sk} {{
-    flex:1; border:1px solid #CBD5E1; border-radius:20px;
-    padding:7px 13px; font-size:13px; outline:none; font-family:inherit;
-}}
-#ub-inp-{sk}:focus {{ border-color:#4F46E5; box-shadow:0 0 0 2px rgba(79,70,229,.15); }}
-#ub-send-{sk} {{
-    background:#4F46E5; color:#fff; border:none; border-radius:50%;
-    width:34px; height:34px; cursor:pointer; font-size:15px; flex-shrink:0;
-}}
-#ub-send-{sk}:hover {{ background:#4338CA; }}
-#ub-send-{sk}:disabled {{ background:#94A3B8; cursor:default; }}
-</style>
-
-<button id="ub-btn-{sk}" title="UniBot" onclick="UB_{sk}.toggle()">🤖</button>
-
-<div id="ub-panel-{sk}">
-  <div id="ub-head-{sk}">
-    <span style="font-size:21px">🤖</span>
-    <div>
-      <div style="font-weight:600;font-size:14px">UniBot</div>
-      <div style="font-size:11px;opacity:.8">Assistant UniSchedule</div>
-    </div>
-    <button onclick="UB_{sk}.toggle()" style="margin-left:auto;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:0">×</button>
-  </div>
-  <div id="ub-msgs-{sk}"></div>
-  <div id="ub-typing-{sk}">⏳ UniBot réfléchit…</div>
-  <div id="ub-foot-{sk}">
-    <input id="ub-inp-{sk}" placeholder="Pose ta question…"
-           onkeydown="if(event.key==='Enter'&&!event.shiftKey){{event.preventDefault();UB_{sk}.send();}}">
-    <button id="ub-send-{sk}" onclick="UB_{sk}.send()">&#10148;</button>
-  </div>
-</div>
-
-<script>
-(function(){{
-  var SK  = {json.dumps(sk)};
-  var KEY = {key_json};
-  var SYS = {sys_json};
-  var LS  = 'unibot_' + SK;
+    # On utilise un template string (pas f-string) pour éviter les conflits avec {}
+    _TMPL = """<script>
+(function() {
+  var pdoc = window.parent.document;
+  var SK   = __SK__;
+  var KEY  = __KEY__;
+  var SYS  = __SYS__;
+  var LS   = 'unibot_' + SK;
   var msgs = [];
-  var open = false;
 
-  function g(id) {{ return document.getElementById(id + '-' + SK); }}
+  // Évite la double injection lors des reruns Streamlit
+  if (pdoc.getElementById('ub-btn-' + SK)) return;
 
-  function addMsg(role, text) {{
-    var d = document.createElement('div');
-    d.className = 'ub-msg-' + SK + ' ' + (role==='user' ? 'ub-user-' : 'ub-bot-') + SK;
+  // ── CSS ────────────────────────────────────────────────────────────────────
+  var css = pdoc.createElement('style');
+  css.textContent =
+    '#ub-btn-'+SK+'{position:fixed;bottom:80px;right:24px;width:58px;height:58px;border-radius:50%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;font-size:26px;border:none;cursor:pointer;z-index:2147483647;box-shadow:0 4px 20px rgba(79,70,229,.55);display:flex;align-items:center;justify-content:center;transition:transform .2s}' +
+    '#ub-btn-'+SK+':hover{transform:scale(1.1)}' +
+    '#ub-panel-'+SK+'{position:fixed;bottom:150px;right:24px;width:350px;height:510px;background:#fff;border-radius:20px;box-shadow:0 16px 48px rgba(0,0,0,.22);display:none;flex-direction:column;z-index:2147483646;overflow:hidden;border:1px solid #E2E8F0}' +
+    '#ub-head-'+SK+'{background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0}' +
+    '#ub-msgs-'+SK+'{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:7px;background:#F8FAFC}' +
+    '.ub-msg-'+SK+'{padding:9px 13px;border-radius:14px;max-width:84%;font-size:13px;line-height:1.5;word-wrap:break-word}' +
+    '.ub-user-'+SK+'{background:#4F46E5;color:#fff;align-self:flex-end;border-bottom-right-radius:3px}' +
+    '.ub-bot-'+SK+'{background:#fff;color:#1E293B;align-self:flex-start;border-bottom-left-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.08)}' +
+    '#ub-typing-'+SK+'{color:#94A3B8;font-size:12px;padding:3px 10px;background:#F8FAFC;flex-shrink:0;display:none}' +
+    '#ub-foot-'+SK+'{display:flex;gap:7px;padding:9px 11px;border-top:1px solid #E2E8F0;background:#fff;flex-shrink:0;align-items:center}' +
+    '#ub-inp-'+SK+'{flex:1;border:1px solid #CBD5E1;border-radius:20px;padding:7px 13px;font-size:13px;outline:none;font-family:inherit}' +
+    '#ub-inp-'+SK+':focus{border-color:#4F46E5;box-shadow:0 0 0 2px rgba(79,70,229,.15)}' +
+    '#ub-send-'+SK+'{background:#4F46E5;color:#fff;border:none;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:15px;flex-shrink:0}' +
+    '#ub-send-'+SK+':hover{background:#4338CA}' +
+    '#ub-send-'+SK+':disabled{background:#94A3B8;cursor:default}';
+  pdoc.head.appendChild(css);
+
+  // ── HTML ───────────────────────────────────────────────────────────────────
+  var root = pdoc.createElement('div');
+  root.id = 'ub-root-' + SK;
+  root.innerHTML =
+    '<button id="ub-btn-'+SK+'">&#129302;</button>' +
+    '<div id="ub-panel-'+SK+'">' +
+      '<div id="ub-head-'+SK+'">' +
+        '<span style="font-size:21px">&#129302;</span>' +
+        '<div><div style="font-weight:600;font-size:14px">UniBot</div>' +
+        '<div style="font-size:11px;opacity:.8">Assistant UniSchedule</div></div>' +
+        '<button id="ub-close-'+SK+'" style="margin-left:auto;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:0">&times;</button>' +
+      '</div>' +
+      '<div id="ub-msgs-'+SK+'"></div>' +
+      '<div id="ub-typing-'+SK+'">⏳ UniBot r\xe9fl\xe9chit…</div>' +
+      '<div id="ub-foot-'+SK+'">' +
+        '<input id="ub-inp-'+SK+'" placeholder="Pose ta question…">' +
+        '<button id="ub-send-'+SK+'">➤</button>' +
+      '</div>' +
+    '</div>';
+  pdoc.body.appendChild(root);
+
+  // ── Logique ────────────────────────────────────────────────────────────────
+  function g(id) { return pdoc.getElementById(id + '-' + SK); }
+
+  function addMsg(role, text) {
+    var d = pdoc.createElement('div');
+    d.className = 'ub-msg-' + SK + ' ' + (role === 'user' ? 'ub-user-' : 'ub-bot-') + SK;
     d.textContent = text;
-    var c = g('ub-msgs'); c.appendChild(d); c.scrollTop = c.scrollHeight;
-  }}
+    var c = g('ub-msgs');
+    c.appendChild(d);
+    c.scrollTop = c.scrollHeight;
+  }
 
-  function save() {{ try {{ localStorage.setItem(LS, JSON.stringify(msgs)); }} catch(e){{}} }}
+  function save() { try { localStorage.setItem(LS, JSON.stringify(msgs)); } catch(e) {} }
 
-  function restore() {{
-    try {{
+  function restore() {
+    try {
       var s = JSON.parse(localStorage.getItem(LS) || '[]');
-      msgs = s; s.forEach(function(m){{ addMsg(m.role, m.content); }});
-    }} catch(e) {{}}
-  }}
+      msgs = s;
+      s.forEach(function(m) { addMsg(m.role, m.content); });
+    } catch(e) {}
+  }
 
-  var app = {{
-    toggle: function() {{
-      open = !open;
-      g('ub-panel').style.display = open ? 'flex' : 'none';
-      if (open) g('ub-inp').focus();
-    }},
-    send: async function() {{
-      var inp = g('ub-inp');
-      var text = inp.value.trim();
-      if (!text) return;
-      inp.value = '';
-      msgs.push({{role:'user', content:text}});
-      addMsg('user', text); save();
-      g('ub-typing').style.display = 'block';
-      g('ub-send').disabled = true;
-      try {{
-        var r = await fetch('https://api.mistral.ai/v1/chat/completions', {{
-          method:'POST',
-          headers:{{'Authorization':'Bearer '+KEY,'Content-Type':'application/json'}},
-          body: JSON.stringify({{
-            model:'open-mistral-7b', max_tokens:1024,
-            messages:[{{role:'system',content:SYS}}].concat(msgs)
-          }})
-        }});
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        var d = await r.json();
-        var rep = (d.choices && d.choices[0]) ? d.choices[0].message.content : '❌ Réponse vide';
-        msgs.push({{role:'assistant',content:rep}});
-        addMsg('bot', rep); save();
-      }} catch(e) {{ addMsg('bot','❌ Erreur : '+e.message); }}
-      g('ub-typing').style.display = 'none';
-      g('ub-send').disabled = false;
-      g('ub-inp').focus();
-    }}
-  }};
+  function toggle() {
+    var p = g('ub-panel');
+    var isOpen = p.style.display === 'flex';
+    p.style.display = isOpen ? 'none' : 'flex';
+    if (!isOpen) g('ub-inp').focus();
+  }
 
-  window['UB_' + SK] = app;
+  async function send() {
+    var inp = g('ub-inp');
+    var text = inp.value.trim();
+    if (!text) return;
+    inp.value = '';
+    msgs.push({ role: 'user', content: text });
+    addMsg('user', text);
+    save();
+    g('ub-typing').style.display = 'block';
+    g('ub-send').disabled = true;
+    try {
+      var r = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'open-mistral-7b',
+          max_tokens: 1024,
+          messages: [{ role: 'system', content: SYS }].concat(msgs)
+        })
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var data = await r.json();
+      var rep = (data.choices && data.choices[0]) ? data.choices[0].message.content : '❌ R\xe9ponse vide';
+      msgs.push({ role: 'assistant', content: rep });
+      addMsg('bot', rep);
+      save();
+    } catch(e) {
+      addMsg('bot', '❌ Erreur : ' + e.message);
+    }
+    g('ub-typing').style.display = 'none';
+    g('ub-send').disabled = false;
+    g('ub-inp').focus();
+  }
+
+  g('ub-btn').addEventListener('click', toggle);
+  g('ub-close').addEventListener('click', toggle);
+  g('ub-send').addEventListener('click', send);
+  g('ub-inp').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
   restore();
-  if (msgs.length === 0) addMsg('bot', '👋 Bonjour\\u00a0! Je suis UniBot, ton assistant UniSchedule. Comment puis-je t\\u2019aider\\u00a0?');
-}})();
-</script>
-"""
-    st.markdown(html, unsafe_allow_html=True)
+  if (msgs.length === 0) {
+    addMsg('bot', '👋 Bonjour ! Je suis UniBot, ton assistant UniSchedule. Comment puis-je t’aider ?');
+  }
+})();
+</script>"""
+
+    script = (_TMPL
+              .replace("__SK__",  json.dumps(sk))
+              .replace("__KEY__", json.dumps(api_key))
+              .replace("__SYS__", json.dumps(system_prompt)))
+
+    _components.html(script, height=0)
