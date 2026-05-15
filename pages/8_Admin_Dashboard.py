@@ -1267,8 +1267,14 @@ def render_admin_departement(dept_id_override=None):
         "📩 Réclamations",            # 15
         "🗓️ Années acad.",            # 16
         "📈 Analyses",                # 17
-        "🤖 UniBot",                  # 18
     ])
+
+    # ── UNIBOT SIDEBAR ────────────────────────────────────────────────────────
+    from utils.chatbot import render_chatbot, _system_admin
+    _dept_name_cb = dept.get("name", "") if dept else ""
+    with st.sidebar:
+        with st.expander("🤖 UniBot", expanded=False):
+            render_chatbot(_system_admin(user, _dept_name_cb), session_key="chatbot_admin")
 
     # ── PROMOTIONS ────────────────────────────────────────────────────────────
     with tabs[0]:
@@ -5427,19 +5433,6 @@ def render_admin_departement(dept_id_override=None):
                             unsafe_allow_html=True
                         )
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # ONGLET 18 : UNIBOT
-    # ══════════════════════════════════════════════════════════════════════════
-    with tabs[18]:
-        st.markdown("#### 🤖 UniBot — Ton assistant intelligent")
-        st.caption(
-            "Pose-moi n'importe quelle question sur la gestion des notes, "
-            "des réclamations, des bulletins ou l'utilisation de l'application."
-        )
-        from utils.chatbot import render_chatbot, _system_admin
-        _dept_name_cb = dept.get("name", "") if dept else ""
-        _cb_sys_a     = _system_admin(user, _dept_name_cb)
-        render_chatbot(_cb_sys_a, session_key="chatbot_admin")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
