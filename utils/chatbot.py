@@ -190,6 +190,21 @@ Tu peux l'aider à :
 
 def render_chatbot(system_prompt: str, session_key: str = "chatbot_messages"):
     """Affiche l'interface chatbot UniBot."""
+    # Décale le chat input vers la gauche pour éviter le bouton "Manage App"
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stChatInput"] {
+            padding-right: 3.5rem !important;
+        }
+        div[data-testid="stChatInput"] > div {
+            padding-right: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     if session_key not in st.session_state:
         st.session_state[session_key] = []
 
