@@ -278,7 +278,7 @@ def render_floating_chatbot(system_prompt: str, session_key: str = "chatbot_floa
     html = f"""
 <style>
 #ub-btn-{sk} {{
-    position:fixed; bottom:24px; right:24px;
+    position:fixed; bottom:80px; right:24px;
     width:58px; height:58px; border-radius:50%;
     background:linear-gradient(135deg,#4F46E5,#7C3AED);
     color:white; font-size:26px; border:none; cursor:pointer;
@@ -289,7 +289,7 @@ def render_floating_chatbot(system_prompt: str, session_key: str = "chatbot_floa
 }}
 #ub-btn-{sk}:hover {{ transform:scale(1.1); box-shadow:0 6px 26px rgba(79,70,229,.75); }}
 #ub-panel-{sk} {{
-    position:fixed; bottom:94px; right:24px;
+    position:fixed; bottom:150px; right:24px;
     width:350px; height:510px;
     background:#fff; border-radius:20px;
     box-shadow:0 16px 48px rgba(0,0,0,.22);
