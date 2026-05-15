@@ -1,18 +1,41 @@
-# utils/chatbot.py — Chatbot IA UniBot basé sur Claude (Anthropic)
+# utils/chatbot.py — Chatbot IA UniBot basé sur Mistral AI
 import streamlit as st
-import anthropic
+import requests
 from datetime import datetime
 
+_MISTRAL_URL   = "https://api.mistral.ai/v1/chat/completions"
+_MISTRAL_MODEL = "open-mistral-7b"
 
-def _get_client() -> anthropic.Anthropic:
+
+def _get_api_key() -> str:
     try:
-        key = st.secrets["anthropic"]["api_key"]
+        return st.secrets["mistral"]["api_key"]
     except Exception:
         raise ValueError(
-            "Clé API Anthropic manquante. Ajoutez [anthropic] api_key = '...' "
+            "Clé API Mistral manquante. Ajoutez [mistral] api_key = '...' "
             "dans .streamlit/secrets.toml"
         )
-    return anthropic.Anthropic(api_key=key)
+
+
+def _call_mistral(system_prompt: str, messages: list) -> str:
+    """Appelle l'API Mistral et retourne la réponse texte."""
+    api_key = _get_api_key()
+    payload = {
+        "model": _MISTRAL_MODEL,
+        "max_tokens": 1024,
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+    }
+    resp = requests.post(
+        _MISTRAL_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+        },
+        json=payload,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
 
 
 # ── Prompts système par profil ────────────────────────────────────────────────
@@ -29,6 +52,7 @@ Règles importantes :
 - Tu peux utiliser des emojis avec modération pour rendre les réponses plus agréables.
 - Date du jour : {today}
 """
+
 
 def _system_student(student: dict, grades: list, schedule: list,
                      claims: list, results: list) -> str:
@@ -50,8 +74,7 @@ def _system_student(student: dict, grades: list, schedule: list,
 
     schedule_txt = ""
     if schedule:
-        upcoming = schedule[:5]
-        for s in upcoming:
+        for s in schedule[:5]:
             schedule_txt += (
                 f"\n  - {s.get('course_name','?')} | "
                 f"{s.get('day_of_week','?')} "
@@ -83,22 +106,19 @@ def _system_student(student: dict, grades: list, schedule: list,
     else:
         results_txt = "\n  Aucune décision calculée."
 
-    avg = ""
-    if grades:
-        vals = [g["grade"] / g["max_grade"] * 20
-                for g in grades if g.get("max_grade")]
-        if vals:
-            avg = f"{sum(vals)/len(vals):.2f}/20"
+    vals = [g["grade"] / g["max_grade"] * 20
+            for g in grades if g.get("max_grade")]
+    avg = f"{sum(vals)/len(vals):.2f}/20" if vals else "non calculée"
 
     return _BASE_PROMPT.format(today=datetime.now().strftime("%d/%m/%Y")) + f"""
 Tu parles avec un ÉTUDIANT. Voici ses informations :
 
 Identité :
-  Nom complet    : {student.get('full_name', '?')}
-  Numéro étudiant: {student.get('student_number', '?')}
-  Classe         : {student.get('class_name', student.get('class_id', '?'))}
-  Promotion      : {student.get('promotion_name', '?')}
-  Moyenne générale actuelle : {avg or 'non calculée'}
+  Nom complet     : {student.get('full_name', '?')}
+  Numéro étudiant : {student.get('student_number', '?')}
+  Classe          : {student.get('class_name', student.get('class_id', '?'))}
+  Promotion       : {student.get('promotion_name', '?')}
+  Moyenne générale: {avg}
 
 Ses notes publiées :{grades_txt}
 
@@ -110,28 +130,25 @@ Ses résultats de session :{results_txt}
 
 Tu peux l'aider à :
 - Comprendre ses notes et sa moyenne
-- Savoir comment contester une note
+- Savoir comment contester une note (réclamation)
 - Comprendre son emploi du temps
 - Savoir comment soumettre un TP
-- Comprendre le processus de réclamation
 - Lire son bulletin
 - Utiliser l'application en général
 """
 
 
 def _system_professor(prof: dict, classes: list, pending_claims: list) -> str:
-    classes_txt = ""
-    if classes:
-        for c in classes:
-            classes_txt += f"\n  - {c.get('name','?')} ({c.get('promotion_name','')})"
-    else:
-        classes_txt = "\n  Aucune classe assignée."
+    classes_txt = "".join(
+        f"\n  - {c.get('name','?')} ({c.get('promotion_name','')})"
+        for c in classes
+    ) or "\n  Aucune classe assignée."
 
-    claims_txt = ""
-    if pending_claims:
-        claims_txt = f"\n  {len(pending_claims)} réclamation(s) en attente de réponse."
-    else:
-        claims_txt = "\n  Aucune réclamation en attente."
+    claims_txt = (
+        f"\n  {len(pending_claims)} réclamation(s) en attente de réponse."
+        if pending_claims else
+        "\n  Aucune réclamation en attente."
+    )
 
     return _BASE_PROMPT.format(today=datetime.now().strftime("%d/%m/%Y")) + f"""
 Tu parles avec un PROFESSEUR. Voici ses informations :
@@ -172,72 +189,51 @@ Tu peux l'aider à :
 # ── Interface Streamlit ───────────────────────────────────────────────────────
 
 def render_chatbot(system_prompt: str, session_key: str = "chatbot_messages"):
-    """
-    Affiche l'interface chatbot.
-    system_prompt : le prompt système adapté au profil de l'utilisateur.
-    session_key   : clé unique dans st.session_state pour les messages.
-    """
+    """Affiche l'interface chatbot UniBot."""
     if session_key not in st.session_state:
         st.session_state[session_key] = []
 
     messages: list = st.session_state[session_key]
 
-    # ── Affichage des messages ────────────────────────────────────────────────
-    chat_container = st.container()
-    with chat_container:
-        if not messages:
-            st.markdown(
-                "<div style='text-align:center;padding:2rem;color:#94A3B8'>"
-                "🤖 <b>UniBot</b><br>"
-                "Bonjour ! Je suis ton assistant UniSchedule.<br>"
-                "Pose-moi n'importe quelle question sur l'application ou tes données."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        for msg in messages:
-            role  = msg["role"]
-            content = msg["content"]
-            if role == "user":
-                with st.chat_message("user"):
-                    st.markdown(content)
-            else:
-                with st.chat_message("assistant", avatar="🤖"):
-                    st.markdown(content)
+    # ── Historique ────────────────────────────────────────────────────────────
+    if not messages:
+        st.markdown(
+            "<div style='text-align:center;padding:2rem;color:#94A3B8'>"
+            "🤖 <b>UniBot</b><br>"
+            "Bonjour ! Je suis ton assistant UniSchedule.<br>"
+            "Pose-moi n'importe quelle question sur l'application ou tes données."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    for msg in messages:
+        with st.chat_message("user" if msg["role"] == "user" else "assistant",
+                             avatar=None if msg["role"] == "user" else "🤖"):
+            st.markdown(msg["content"])
 
-    # ── Saisie utilisateur ────────────────────────────────────────────────────
+    # ── Saisie ────────────────────────────────────────────────────────────────
     user_input = st.chat_input("Pose ta question à UniBot…")
 
     if user_input:
         messages.append({"role": "user", "content": user_input})
-
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("UniBot réfléchit…"):
                 try:
-                    client = _get_client()
-                    response = client.messages.create(
-                        model="claude-haiku-4-5-20251001",
-                        max_tokens=1024,
-                        system=system_prompt,
-                        messages=[
-                            {"role": m["role"], "content": m["content"]}
-                            for m in messages
-                        ],
-                    )
-                    reply = response.content[0].text
+                    reply = _call_mistral(system_prompt, messages)
                 except ValueError as ve:
                     reply = f"⚠️ {ve}"
+                except requests.HTTPError as he:
+                    reply = f"❌ Erreur API Mistral ({he.response.status_code}) : {he.response.text[:200]}"
                 except Exception as e:
                     reply = f"❌ Erreur UniBot : {e}"
-
             st.markdown(reply)
 
         messages.append({"role": "assistant", "content": reply})
         st.session_state[session_key] = messages
 
-    # ── Bouton vider ─────────────────────────────────────────────────────────
+    # ── Vider ─────────────────────────────────────────────────────────────────
     if messages:
         if st.button("🗑️ Vider la conversation", key=f"clear_{session_key}"):
             st.session_state[session_key] = []
