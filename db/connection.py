@@ -7,14 +7,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Répertoire racine du projet (db/ -> racine)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def _load_db_config():
+
+def _load_db_config() -> dict:
     """Charge la config DB depuis st.secrets ou secrets.toml en fallback."""
     try:
         cfg = st.secrets["postgres"]
-        return {
+        base = {
             "host":     cfg["host"],
             "port":     int(cfg["port"]),
             "dbname":   cfg["database"],
@@ -23,57 +23,93 @@ def _load_db_config():
             "sslmode":  cfg.get("sslmode", "require"),
         }
     except Exception:
-        pass
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        secrets_path = os.path.join(_BASE_DIR, ".streamlit", "secrets.toml")
+        with open(secrets_path, "rb") as f:
+            data = tomllib.load(f)
+        cfg = data["postgres"]
+        base = {
+            "host":     cfg["host"],
+            "port":     int(cfg["port"]),
+            "dbname":   cfg["database"],
+            "user":     cfg["user"],
+            "password": cfg["password"],
+            "sslmode":  cfg.get("sslmode", "require"),
+        }
 
-    # Fallback : lire secrets.toml directement
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
-
-    secrets_path = os.path.join(_BASE_DIR, ".streamlit", "secrets.toml")
-    with open(secrets_path, "rb") as f:
-        data = tomllib.load(f)
-    cfg = data["postgres"]
-    return {
-        "host":     cfg["host"],
-        "port":     int(cfg["port"]),
-        "dbname":   cfg["database"],
-        "user":     cfg["user"],
-        "password": cfg["password"],
-        "sslmode":  cfg.get("sslmode", "require"),
-    }
+    # Keepalives TCP : évite que Neon coupe les connexions inactives
+    base.update({
+        "connect_timeout":    10,
+        "keepalives":         1,
+        "keepalives_idle":    30,
+        "keepalives_interval": 10,
+        "keepalives_count":   5,
+    })
+    return base
 
 
 @st.cache_resource
-def get_connection_pool():
-    cfg = _load_db_config()
-    pool = psycopg2.pool.ThreadedConnectionPool(
-        minconn=1,
-        maxconn=10,
-        connect_timeout=10,
-        **cfg,
+def get_connection_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    return psycopg2.pool.ThreadedConnectionPool(
+        minconn=1, maxconn=10, **_load_db_config()
     )
-    return pool
+
+
+def _is_alive(conn) -> bool:
+    """Vérifie si une connexion du pool est encore utilisable côté serveur."""
+    if conn is None or conn.closed != 0:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
 
 
 @contextmanager
 def get_db():
+    pool = get_connection_pool()
+    conn = None
     try:
-        pool = get_connection_pool()
-    except Exception as e:
-        st.error(f"Impossible de se connecter a la base de donnees : {e}")
-        raise ConnectionError(f"Connexion impossible : {e}") from e
-    conn = pool.getconn()
-    try:
+        conn = pool.getconn()
+
+        # Si Neon a fermé la connexion côté serveur, on en crée une fraîche
+        if not _is_alive(conn):
+            logger.warning("Connexion périmée détectée — reconnexion en cours…")
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            conn = psycopg2.connect(**_load_db_config())
+
         conn.set_client_encoding("UTF8")
         yield conn
         conn.commit()
+
     except Exception:
-        conn.rollback()
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
+
     finally:
-        pool.putconn(conn)
+        if conn is not None:
+            try:
+                if conn.closed == 0:
+                    pool.putconn(conn)
+                else:
+                    pool.putconn(conn, close=True)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def execute_query(sql: str, params=None, fetch: str = "all"):
