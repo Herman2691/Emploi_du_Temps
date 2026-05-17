@@ -527,6 +527,26 @@ class CourseQueries:
         return courses or []
 
     @staticmethod
+    def get_programme_by_class(class_id):
+        """Programme complet d'une classe : cours avec UE, crédits et prof, via la promotion."""
+        return execute_query("""
+            SELECT c.id, c.name, c.credits_ec, c.ue_id,
+                   ue.name        AS ue_name,
+                   ue.code        AS ue_code,
+                   ue.group_label AS ue_group,
+                   ue.credits     AS ue_credits,
+                   p.name         AS professor_name
+            FROM courses c
+            LEFT JOIN unites_enseignement ue ON c.ue_id        = ue.id
+            LEFT JOIN professors           p  ON c.professor_id = p.id
+            JOIN classes cl ON cl.id = %s
+            WHERE (c.promotion_id = cl.promotion_id OR c.promotion_id IS NULL)
+              AND c.is_active = TRUE
+            ORDER BY ue.group_label NULLS LAST, ue.code NULLS LAST,
+                     ue.name NULLS LAST, c.name
+        """, (class_id,)) or []
+
+    @staticmethod
     def generate_code(department_id, name=""):
         """Génère le prochain code unique : initiales du nom + séquence (ex: MAT001)."""
         import re as _re
@@ -1388,6 +1408,71 @@ class StudentRegistryQueries:
                      d.name NULLS LAST, fi.name NULLS LAST, r.full_name
             LIMIT %s
         """, params)
+
+    @staticmethod
+    def get_by_student_id(student_id):
+        """Retourne la fiche registre d'un étudiant connecté via students.registry_id."""
+        return execute_query("""
+            SELECT r.*,
+                   d.name  AS department_name,
+                   fi.name AS filiere_name,
+                   o.name  AS option_name,
+                   pr.name AS promotion_name
+            FROM student_registry r
+            LEFT JOIN departments   d  ON r.department_id = d.id
+            LEFT JOIN filieres      fi ON r.filiere_id    = fi.id
+            LEFT JOIN options_etude o  ON r.option_id     = o.id
+            LEFT JOIN promotions    pr ON r.promotion_id  = pr.id
+            JOIN students s ON s.registry_id = r.id
+            WHERE s.id = %s
+            LIMIT 1
+        """, (student_id,), fetch="one")
+
+    @staticmethod
+    def update_profile(registry_id, telephone=None, lieu_naissance=None,
+                       nationalite=None, etat_civil=None, province=None,
+                       district=None, territoire=None, secteur=None,
+                       commune=None, adresse_domicile=None,
+                       contact_urgence_nom=None, contact_urgence_tel=None,
+                       contact_urgence_adresse=None,
+                       diplome_type=None, diplome_numero=None,
+                       diplome_section=None, diplome_etablissement=None,
+                       diplome_annee=None, photo_passeport_url=None):
+        execute_query("""
+            UPDATE student_registry SET
+                telephone               = %s,
+                lieu_naissance          = %s,
+                nationalite             = %s,
+                etat_civil              = %s,
+                province                = %s,
+                district                = %s,
+                territoire              = %s,
+                secteur                 = %s,
+                commune                 = %s,
+                adresse_domicile        = %s,
+                contact_urgence_nom     = %s,
+                contact_urgence_tel     = %s,
+                contact_urgence_adresse = %s,
+                diplome_type            = %s,
+                diplome_numero          = %s,
+                diplome_section         = %s,
+                diplome_etablissement   = %s,
+                diplome_annee           = %s,
+                photo_passeport_url     = COALESCE(%s, photo_passeport_url)
+            WHERE id = %s
+        """, (
+            telephone or None, lieu_naissance or None,
+            nationalite or None, etat_civil or None,
+            province or None, district or None,
+            territoire or None, secteur or None,
+            commune or None, adresse_domicile or None,
+            contact_urgence_nom or None, contact_urgence_tel or None,
+            contact_urgence_adresse or None,
+            diplome_type or None, diplome_numero or None,
+            diplome_section or None, diplome_etablissement or None,
+            diplome_annee or None, photo_passeport_url or None,
+            registry_id,
+        ), fetch="none")
 
     @staticmethod
     def get_by_department(department_id):

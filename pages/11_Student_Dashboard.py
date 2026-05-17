@@ -492,118 +492,222 @@ with tab_notes:
 # ONGLET 4 : COURS & DOCUMENTS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_cours:
-    try:
-        docs = CourseDocumentQueries.get_by_class(class_id)
-    except Exception as e:
-        st.error(str(e))
-        docs = []
+    from db.queries import CourseQueries as _CQ_stu
 
-    if not docs:
-        st.info("📭 Aucun document de cours disponible pour l'instant.")
-    else:
-        # Grouper par cours
-        by_course = {}
-        for d in docs:
-            cn = d["course_name"]
-            by_course.setdefault(cn, []).append(d)
+    _sub_prog, _sub_docs = st.tabs(["📋 Mon Programme", "📄 Documents de cours"])
 
-        for course_name, course_docs in by_course.items():
-            st.markdown(f"#### 📘 {course_name}")
-            for doc in course_docs:
-                _state_key = f"show_doc_{doc['id']}"
-                _is_open   = st.session_state.get(_state_key, False)
-                with st.expander(
-                    f"📄 {doc['title']} — 👨‍🏫 {doc['professor_name']}",
-                    expanded=_is_open,
+    # ── Sous-onglet A : Programme structuré par session ──────────────────────
+    with _sub_prog:
+        try:
+            _programme = _CQ_stu.get_programme_by_class(class_id)
+        except Exception as _e_prog:
+            st.error(str(_e_prog))
+            _programme = []
+
+        if not _programme:
+            st.info("📭 Aucun cours enregistré pour votre classe.")
+        else:
+            # Mapping group_label → libellé affiché (ordre trié → Session 1 en premier)
+            _SESSION_LABELS = {}
+            _sorted_groups = sorted(set(
+                _c.get("ue_group") or "—" for _c in _programme
+            ))
+            for _i, _g in enumerate(_sorted_groups):
+                _SESSION_LABELS[_g] = f"Session {_i + 1}"
+
+            # Grouper : groupe → UE → cours
+            _groups = {}
+            for _c in _programme:
+                _grp = _c.get("ue_group") or "—"
+                _ue_id = _c.get("ue_id")
+                _ue_key = (_ue_id, _c.get("ue_code") or "", _c.get("ue_name") or "",
+                           float(_c.get("ue_credits") or 0))
+                _groups.setdefault(_grp, {}).setdefault(_ue_key, []).append(_c)
+
+            _TH_SESSION = ("padding:10px 14px;background:#1E40AF;color:white;"
+                           "font-size:0.9rem;font-weight:700;text-align:center;"
+                           "letter-spacing:0.05em;border:1px solid #1E40AF")
+            _TH = ("padding:7px 10px;border:1px solid #CBD5E1;"
+                   "background:#2563EB;color:white;font-size:0.78rem;text-align:center")
+            _TR_UE = ("padding:6px 10px;border:1px solid #CBD5E1;"
+                      "background:#EFF6FF;font-weight:600;font-size:0.83rem;color:#1E3A8A")
+            _TR_EC = ("padding:5px 10px;border:1px solid #E2E8F0;"
+                      "background:#F8FAFC;font-size:0.78rem;color:#475569")
+
+            for _grp_label in sorted(_groups.keys()):
+                _ue_map = _groups[_grp_label]
+                _session_title = _SESSION_LABELS.get(_grp_label, _grp_label).upper()
+
+                _rows_html = ""
+                for (_ue_id, _ue_code, _ue_name, _ue_cred), _courses in sorted(
+                    _ue_map.items(), key=lambda x: (x[0][1], x[0][2])
                 ):
-                    st.caption(
-                        f"📄 {doc['file_name']} · "
-                        f"💾 {doc.get('file_size_kb', 0)} Ko"
-                    )
-                    if doc.get("description"):
-                        st.caption(doc["description"])
-
-                    # Récupérer les bytes une seule fois
-                    try:
-                        _pdf_bytes = get_pdf_bytes(doc["file_url"]) if doc.get("file_url") else None
-                    except Exception:
-                        _pdf_bytes = None
-
-                    col_view, col_dl, _ = st.columns([1, 1, 3])
-                    with col_view:
-                        _btn_label = "🙈 Fermer" if _is_open else "👁️ Lire"
-                        if st.button(_btn_label, key=f"btn_view_{doc['id']}",
-                                     use_container_width=True):
-                            st.session_state[_state_key] = not _is_open
-                            if _is_open:
-                                st.session_state.pop(f"pdf_page_{doc['id']}", None)
-                    with col_dl:
-                        if _pdf_bytes:
-                            st.download_button(
-                                "⬇️ Télécharger", _pdf_bytes,
-                                file_name=doc["file_name"],
-                                mime="application/pdf",
-                                key=f"dl_doc_{doc['id']}",
-                                use_container_width=True,
+                    if _ue_id:
+                        _rows_html += (
+                            f"<tr>"
+                            f"<td style='{_TR_UE};text-align:center'>{_ue_code or '—'}</td>"
+                            f"<td style='{_TR_UE}'>{_ue_name}</td>"
+                            f"<td style='{_TR_UE};text-align:center'>—</td>"
+                            f"<td style='{_TR_UE};text-align:center'>"
+                            f"{int(_ue_cred) if _ue_cred else '—'}</td>"
+                            f"<td style='{_TR_UE}'>—</td>"
+                            f"</tr>"
+                        )
+                        for _ec in _courses:
+                            _ec_cred = _ec.get("credits_ec")
+                            _rows_html += (
+                                f"<tr>"
+                                f"<td style='{_TR_EC};text-align:center'>—</td>"
+                                f"<td style='{_TR_EC};padding-left:2rem'>↳ {_ec['name']}</td>"
+                                f"<td style='{_TR_EC};text-align:center'>"
+                                f"{int(_ec_cred) if _ec_cred else '—'}</td>"
+                                f"<td style='{_TR_EC};text-align:center'>—</td>"
+                                f"<td style='{_TR_EC}'>{_ec.get('professor_name') or '—'}</td>"
+                                f"</tr>"
                             )
-                        else:
-                            st.caption("Fichier indisponible")
+                    else:
+                        for _ec in _courses:
+                            _ec_cred = _ec.get("credits_ec")
+                            _rows_html += (
+                                f"<tr>"
+                                f"<td style='{_TR_EC};text-align:center'>—</td>"
+                                f"<td style='{_TR_EC}'>{_ec['name']}</td>"
+                                f"<td style='{_TR_EC};text-align:center'>"
+                                f"{int(_ec_cred) if _ec_cred else '—'}</td>"
+                                f"<td style='{_TR_EC};text-align:center'>—</td>"
+                                f"<td style='{_TR_EC}'>{_ec.get('professor_name') or '—'}</td>"
+                                f"</tr>"
+                            )
 
-                    if _is_open:
-                        if _pdf_bytes:
-                            try:
-                                import fitz as _fitz
-                                _page_key = f"pdf_page_{doc['id']}"
-                                _pdoc     = _fitz.open(stream=_pdf_bytes, filetype="pdf")
-                                _total_pg = len(_pdoc)
+                st.markdown(
+                    f"""<div style="overflow-x:auto;margin-bottom:2rem">
+                    <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
+                        <thead>
+                            <tr>
+                                <td colspan="5" style="{_TH_SESSION}">
+                                    UE DU {_session_title}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th style="{_TH};width:90px">Code UE</th>
+                                <th style="{_TH}">Intitulés UE / EC</th>
+                                <th style="{_TH};width:85px">Crédits EC</th>
+                                <th style="{_TH};width:85px">Crédits UE</th>
+                                <th style="{_TH}">Professeur titulaire</th>
+                            </tr>
+                        </thead>
+                        <tbody>{_rows_html}</tbody>
+                    </table></div>""",
+                    unsafe_allow_html=True,
+                )
 
-                                # ── Navigation D'ABORD : la mise à jour du state
-                                # ── se fait AVANT la lecture de _cur_pg,
-                                # ── donc l'image correcte s'affiche dans le même rerun
-                                _nc1, _nc2, _nc3 = st.columns([1, 2, 1])
-                                _pg_now = st.session_state.get(_page_key, 0)
-                                with _nc1:
-                                    if st.button("◀ Précédent",
-                                                 key=f"prev_pg_{doc['id']}",
-                                                 disabled=(_pg_now == 0),
-                                                 use_container_width=True):
-                                        st.session_state[_page_key] = _pg_now - 1
-                                with _nc3:
-                                    if st.button("Suivant ▶",
-                                                 key=f"next_pg_{doc['id']}",
-                                                 disabled=(_pg_now >= _total_pg - 1),
-                                                 use_container_width=True):
-                                        st.session_state[_page_key] = _pg_now + 1
+    # ── Sous-onglet B : Documents PDF ─────────────────────────────────────────
+    with _sub_docs:
+        try:
+            docs = CourseDocumentQueries.get_by_class(class_id)
+        except Exception as e:
+            st.error(str(e))
+            docs = []
 
-                                # ── Lire la page après les boutons (état déjà mis à jour)
-                                _cur_pg = max(0, min(
-                                    st.session_state.get(_page_key, 0), _total_pg - 1
-                                ))
-                                with _nc2:
-                                    st.markdown(
-                                        f"<div style='text-align:center;padding:0.4rem 0;"
-                                        f"color:#64748B;font-size:0.88rem'>"
-                                        f"Page {_cur_pg + 1} / {_total_pg}</div>",
-                                        unsafe_allow_html=True,
-                                    )
+        if not docs:
+            st.info("📭 Aucun document de cours disponible pour l'instant.")
+        else:
+            by_course = {}
+            for d in docs:
+                cn = d["course_name"]
+                by_course.setdefault(cn, []).append(d)
 
-                                # ── Rendu de la page courante
-                                _pix = _pdoc[_cur_pg].get_pixmap(
-                                    matrix=_fitz.Matrix(2.0, 2.0)
+            for course_name, course_docs in by_course.items():
+                st.markdown(f"#### 📘 {course_name}")
+                for doc in course_docs:
+                    _state_key = f"show_doc_{doc['id']}"
+                    _is_open   = st.session_state.get(_state_key, False)
+                    with st.expander(
+                        f"📄 {doc['title']} — 👨‍🏫 {doc['professor_name']}",
+                        expanded=_is_open,
+                    ):
+                        st.caption(
+                            f"📄 {doc['file_name']} · "
+                            f"💾 {doc.get('file_size_kb', 0)} Ko"
+                        )
+                        if doc.get("description"):
+                            st.caption(doc["description"])
+
+                        try:
+                            _pdf_bytes = get_pdf_bytes(doc["file_url"]) if doc.get("file_url") else None
+                        except Exception:
+                            _pdf_bytes = None
+
+                        col_view, col_dl, _ = st.columns([1, 1, 3])
+                        with col_view:
+                            _btn_label = "🙈 Fermer" if _is_open else "👁️ Lire"
+                            if st.button(_btn_label, key=f"btn_view_{doc['id']}",
+                                         use_container_width=True):
+                                st.session_state[_state_key] = not _is_open
+                                if _is_open:
+                                    st.session_state.pop(f"pdf_page_{doc['id']}", None)
+                        with col_dl:
+                            if _pdf_bytes:
+                                st.download_button(
+                                    "⬇️ Télécharger", _pdf_bytes,
+                                    file_name=doc["file_name"],
+                                    mime="application/pdf",
+                                    key=f"dl_doc_{doc['id']}",
+                                    use_container_width=True,
                                 )
-                                _pdoc.close()
-                                st.image(_pix.tobytes("png"), use_container_width=True)
+                            else:
+                                st.caption("Fichier indisponible")
 
-                            except ImportError:
-                                st.info("📥 Utilisez le bouton Télécharger pour lire ce fichier.")
-                            except Exception as _e:
-                                st.error(f"Erreur lecture PDF : {_e}")
-                        else:
-                            st.warning(
-                                "⚠️ Fichier indisponible. "
-                                "Demandez au professeur de le re-uploader."
-                            )
-            st.divider()
+                        if _is_open:
+                            if _pdf_bytes:
+                                try:
+                                    import fitz as _fitz
+                                    _page_key = f"pdf_page_{doc['id']}"
+                                    _pdoc     = _fitz.open(stream=_pdf_bytes, filetype="pdf")
+                                    _total_pg = len(_pdoc)
+
+                                    _nc1, _nc2, _nc3 = st.columns([1, 2, 1])
+                                    _pg_now = st.session_state.get(_page_key, 0)
+                                    with _nc1:
+                                        if st.button("◀ Précédent",
+                                                     key=f"prev_pg_{doc['id']}",
+                                                     disabled=(_pg_now == 0),
+                                                     use_container_width=True):
+                                            st.session_state[_page_key] = _pg_now - 1
+                                    with _nc3:
+                                        if st.button("Suivant ▶",
+                                                     key=f"next_pg_{doc['id']}",
+                                                     disabled=(_pg_now >= _total_pg - 1),
+                                                     use_container_width=True):
+                                            st.session_state[_page_key] = _pg_now + 1
+
+                                    _cur_pg = max(0, min(
+                                        st.session_state.get(_page_key, 0), _total_pg - 1
+                                    ))
+                                    with _nc2:
+                                        st.markdown(
+                                            f"<div style='text-align:center;padding:0.4rem 0;"
+                                            f"color:#64748B;font-size:0.88rem'>"
+                                            f"Page {_cur_pg + 1} / {_total_pg}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    _pix = _pdoc[_cur_pg].get_pixmap(
+                                        matrix=_fitz.Matrix(2.0, 2.0)
+                                    )
+                                    _pdoc.close()
+                                    st.image(_pix.tobytes("png"), use_container_width=True)
+
+                                except ImportError:
+                                    st.info("📥 Utilisez le bouton Télécharger pour lire ce fichier.")
+                                except Exception as _e:
+                                    st.error(f"Erreur lecture PDF : {_e}")
+                            else:
+                                st.warning(
+                                    "⚠️ Fichier indisponible. "
+                                    "Demandez au professeur de le re-uploader."
+                                )
+                st.divider()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1369,27 +1473,222 @@ _cb_system = _system_student(student, _cb_grades, _cb_sched, _cb_claims, _cb_res
 render_floating_chatbot(_cb_system, session_key="chatbot_student")
 
 with tab_compte:
-    st.markdown("#### ⚙️ Mon Compte")
-    st.markdown(f"**Nom d'utilisateur :** @{_username}")
-    st.markdown(f"**Numéro étudiant :** {student['student_number']}")
-    st.divider()
-    st.markdown("##### 🔑 Changer mon mot de passe")
-    with st.form("change_pwd_form"):
-        cur_pwd  = st.text_input("Mot de passe actuel *", type="password", placeholder="••••••••")
-        col_np1, col_np2 = st.columns(2)
-        with col_np1:
-            new_pwd1 = st.text_input("Nouveau mot de passe *", type="password", placeholder="Min 8 caractères")
-        with col_np2:
-            new_pwd2 = st.text_input("Confirmer *", type="password", placeholder="••••••••")
-        if st.form_submit_button("✅ Enregistrer le nouveau mot de passe", type="primary"):
-            ok, msg = change_student_password(
-                student_id=student["id"],
-                current_password=cur_pwd,
-                new_password=new_pwd1,
-                confirm=new_pwd2,
-            )
-            if ok:
-                st.success(f"✅ {msg}")
+    from db.queries import StudentRegistryQueries as _SRQ_cpt
+    from utils.storage import upload_file, get_file_bytes as _get_img_bytes
+
+    # Charger la fiche registre de l'étudiant
+    try:
+        _reg = _SRQ_cpt.get_by_student_id(student["id"]) or {}
+    except Exception:
+        _reg = {}
+
+    _sub_profil, _sub_pwd = st.tabs(["👤 Mon Profil", "🔑 Mot de passe"])
+
+    # ── Sous-onglet : Profil enrichi ──────────────────────────────────────────
+    with _sub_profil:
+        st.markdown(f"**Numéro étudiant :** {student['student_number']}  ·  **@{_username}**")
+        st.divider()
+
+        # ── Photo passeport ───────────────────────────────────────────────────
+        _photo_url = _reg.get("photo_passeport_url") or ""
+        _col_photo, _col_info = st.columns([1, 3])
+        with _col_photo:
+            if _photo_url:
+                try:
+                    _img_bytes = _get_img_bytes(_photo_url)
+                    if _img_bytes:
+                        st.image(_img_bytes, width=130, caption="Photo passeport")
+                    else:
+                        st.caption("Photo indisponible")
+                except Exception:
+                    st.caption("Photo indisponible")
             else:
-                st.error(f"❌ {msg}")
-    st.caption("Si vous avez oublié votre mot de passe, contactez l'administration.")
+                st.markdown(
+                    "<div style='width:130px;height:160px;background:#E2E8F0;"
+                    "border-radius:8px;display:flex;align-items:center;"
+                    "justify-content:center;color:#94A3B8;font-size:2rem'>👤</div>",
+                    unsafe_allow_html=True
+                )
+            _new_photo = st.file_uploader(
+                "Changer la photo", type=["jpg","jpeg","png"],
+                key="upload_photo_passeport", label_visibility="collapsed"
+            )
+            if _new_photo:
+                if st.button("📤 Enregistrer la photo", key="btn_save_photo",
+                             use_container_width=True):
+                    try:
+                        _photo_bytes = _new_photo.read()
+                        _stored, _ = upload_file(
+                            _photo_bytes, _new_photo.name,
+                            "student-photos", folder=str(student["id"])
+                        )
+                        _SRQ_cpt.update_profile(_reg["id"], photo_passeport_url=_stored)
+                        st.success("Photo enregistrée !")
+                        st.rerun()
+                    except Exception as _ep:
+                        st.error(f"Erreur upload : {_ep}")
+        with _col_info:
+            st.caption("Photo passeport — utilisable pour les documents officiels (visage uniquement svp)")
+
+        st.divider()
+
+        # ── Formulaire profil ─────────────────────────────────────────────────
+        with st.form("profil_form"):
+            # Section 1 : Informations personnelles
+            st.markdown("##### Informations personnelles")
+            _pc1, _pc2, _pc3 = st.columns(3)
+            _f_nom     = _pc1.text_input("Nom *",     value=_reg.get("nom") or "")
+            _f_postnom = _pc2.text_input("Postnom",   value=_reg.get("postnom") or "")
+            _f_prenom  = _pc3.text_input("Prénom",    value=_reg.get("prenom") or "")
+
+            _pc4, _pc5 = st.columns(2)
+            _f_email = _pc4.text_input("Email",
+                value=student.get("email") or "", disabled=True)
+            _f_tel   = _pc5.text_input("Téléphone",
+                value=_reg.get("telephone") or "",
+                placeholder="+243 ...")
+
+            _pc6, _pc7, _pc8 = st.columns(3)
+            _f_sexe = _pc6.selectbox("Sexe",
+                ["", "Masculin", "Féminin"],
+                index=["", "Masculin", "Féminin"].index(_reg.get("sexe") or "")
+                if _reg.get("sexe") in ["", "Masculin", "Féminin"] else 0)
+            _f_ddn = _pc7.date_input("Date de naissance",
+                value=_reg.get("date_naissance") or None,
+                format="DD/MM/YYYY", min_value=None)
+            _f_lieu_nais = _pc8.text_input("Lieu de naissance",
+                value=_reg.get("lieu_naissance") or "")
+
+            _pc9, _pc10 = st.columns(2)
+            _f_nationalite = _pc9.text_input("Nationalité",
+                value=_reg.get("nationalite") or "", placeholder="Ex : Congolaise(RDC)")
+            _f_etat_civil  = _pc10.selectbox("État civil",
+                ["", "Célibataire", "Marié(e)", "Divorcé(e)", "Veuf/Veuve"],
+                index=["", "Célibataire", "Marié(e)", "Divorcé(e)", "Veuf/Veuve"].index(
+                    _reg.get("etat_civil") or "")
+                if (_reg.get("etat_civil") or "") in
+                    ["", "Célibataire", "Marié(e)", "Divorcé(e)", "Veuf/Veuve"] else 0)
+
+            st.divider()
+
+            # Section 2 : Adresse
+            st.markdown("##### Adresse")
+            _pa1, _pa2 = st.columns(2)
+            _f_province  = _pa1.text_input("Province d'origine",
+                value=_reg.get("province") or "")
+            _f_district  = _pa2.text_input("District",
+                value=_reg.get("district") or "")
+
+            _pa3, _pa4 = st.columns(2)
+            _f_territoire = _pa3.text_input("Territoire",
+                value=_reg.get("territoire") or "")
+            _f_secteur    = _pa4.text_input("Secteur",
+                value=_reg.get("secteur") or "")
+
+            _pa5, _pa6 = st.columns(2)
+            _f_commune  = _pa5.text_input("Commune",
+                value=_reg.get("commune") or "")
+            _f_adresse  = _pa6.text_input("Adresse domicile",
+                value=_reg.get("adresse_domicile") or "")
+
+            st.divider()
+
+            # Section 3 : Contact d'urgence
+            st.markdown("##### Contact d'urgence")
+            _pu1, _pu2, _pu3 = st.columns(3)
+            _f_urg_nom = _pu1.text_input("Nom de la personne *",
+                value=_reg.get("contact_urgence_nom") or "")
+            _f_urg_tel = _pu2.text_input("Téléphone *",
+                value=_reg.get("contact_urgence_tel") or "")
+            _f_urg_adr = _pu3.text_input("Adresse",
+                value=_reg.get("contact_urgence_adresse") or "")
+
+            st.divider()
+
+            # Section 4 : Diplôme
+            st.markdown("##### Diplôme d'accès")
+            _pd1, _pd2 = st.columns(2)
+            _f_dip_type  = _pd1.selectbox("Type de diplôme",
+                ["", "BAC", "A2", "Licence", "Master", "Autre"],
+                index=["", "BAC", "A2", "Licence", "Master", "Autre"].index(
+                    _reg.get("diplome_type") or "")
+                if (_reg.get("diplome_type") or "") in
+                    ["", "BAC", "A2", "Licence", "Master", "Autre"] else 0)
+            _f_dip_num   = _pd2.text_input("Numéro du diplôme",
+                value=_reg.get("diplome_numero") or "")
+
+            _pd3, _pd4 = st.columns(2)
+            _f_dip_sect = _pd3.text_input("Section du diplôme",
+                value=_reg.get("diplome_section") or "",
+                placeholder="Ex : Sciences, Lettres...")
+            _f_dip_etab = _pd4.text_input("Établissement",
+                value=_reg.get("diplome_etablissement") or "")
+
+            _f_dip_annee = st.text_input("Année d'obtention",
+                value=_reg.get("diplome_annee") or "",
+                placeholder="Ex : 2023-2024")
+
+            st.divider()
+
+            _sb1, _sb2, _ = st.columns([1, 1, 3])
+            _submitted = _sb1.form_submit_button("✅ Modifier", type="primary",
+                                                  use_container_width=True)
+            _cancelled = _sb2.form_submit_button("✖️ Annuler",
+                                                  use_container_width=True)
+
+            if _submitted and _reg.get("id"):
+                try:
+                    _SRQ_cpt.update_profile(
+                        registry_id=_reg["id"],
+                        telephone=_f_tel,
+                        lieu_naissance=_f_lieu_nais,
+                        nationalite=_f_nationalite,
+                        etat_civil=_f_etat_civil,
+                        province=_f_province,
+                        district=_f_district,
+                        territoire=_f_territoire,
+                        secteur=_f_secteur,
+                        commune=_f_commune,
+                        adresse_domicile=_f_adresse,
+                        contact_urgence_nom=_f_urg_nom,
+                        contact_urgence_tel=_f_urg_tel,
+                        contact_urgence_adresse=_f_urg_adr,
+                        diplome_type=_f_dip_type,
+                        diplome_numero=_f_dip_num,
+                        diplome_section=_f_dip_sect,
+                        diplome_etablissement=_f_dip_etab,
+                        diplome_annee=_f_dip_annee,
+                    )
+                    st.success("✅ Profil mis à jour avec succès !")
+                    st.rerun()
+                except Exception as _ef:
+                    st.error(f"Erreur : {_ef}")
+            elif _submitted and not _reg.get("id"):
+                st.warning("Votre fiche registre est introuvable. Contactez l'administration.")
+
+    # ── Sous-onglet : Mot de passe ────────────────────────────────────────────
+    with _sub_pwd:
+        st.markdown("##### 🔑 Changer mon mot de passe")
+        with st.form("change_pwd_form"):
+            cur_pwd  = st.text_input("Mot de passe actuel *", type="password",
+                                     placeholder="••••••••")
+            col_np1, col_np2 = st.columns(2)
+            with col_np1:
+                new_pwd1 = st.text_input("Nouveau mot de passe *", type="password",
+                                         placeholder="Min 8 caractères")
+            with col_np2:
+                new_pwd2 = st.text_input("Confirmer *", type="password",
+                                         placeholder="••••••••")
+            if st.form_submit_button("✅ Enregistrer le nouveau mot de passe",
+                                     type="primary"):
+                ok, msg = change_student_password(
+                    student_id=student["id"],
+                    current_password=cur_pwd,
+                    new_password=new_pwd1,
+                    confirm=new_pwd2,
+                )
+                if ok:
+                    st.success(f"✅ {msg}")
+                else:
+                    st.error(f"❌ {msg}")
+        st.caption("Si vous avez oublié votre mot de passe, contactez l'administration.")
