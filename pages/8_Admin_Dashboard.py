@@ -3512,17 +3512,20 @@ def render_admin_departement(dept_id_override=None):
                                          use_container_width=True):
                                 st.session_state[f"show_reset_{reg['id']}"] = True
                         if st.session_state.get(f"show_reset_{reg['id']}"):
+                            st.info(f"💡 Astuce : laisser vide = réinitialise au numéro étudiant (`{reg['student_number']}`)")
                             with st.form(f"reset_pwd_reg_{reg['id']}"):
-                                _np = st.text_input("Nouveau mot de passe",
+                                _np = st.text_input("Nouveau mot de passe (vide = N° étudiant)",
                                                     type="password",
                                                     key=f"np_reg_{reg['id']}")
-                                if st.form_submit_button("Confirmer"):
-                                    if _np.strip():
-                                        _SQReg.reset_password(_stu_id, _hp_reg(_np))
-                                        st.session_state.pop(f"show_reset_{reg['id']}", None)
-                                        st.success("Mot de passe réinitialisé."); st.rerun()
+                                if st.form_submit_button("Confirmer", type="primary"):
+                                    _pwd_to_set = _np.strip() or reg["student_number"]
+                                    _SQReg.reset_password(_stu_id, _hp_reg(_pwd_to_set))
+                                    st.session_state.pop(f"show_reset_{reg['id']}", None)
+                                    if not _np.strip():
+                                        st.success(f"MDP réinitialisé au numéro étudiant : {reg['student_number']}")
                                     else:
-                                        st.error("Mot de passe vide.")
+                                        st.success("Mot de passe réinitialisé.")
+                                    st.rerun()
                     else:
                         # Pas encore de compte — formulaire de création
                         st.markdown("**Compte :** ⚪ Aucun compte — créer l'accès :")
