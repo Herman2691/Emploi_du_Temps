@@ -10,6 +10,28 @@ user = get_current_user()
 role = user["role"]
 
 
+# ── Cache léger sur les requêtes lourdes (60s TTL) ────────────────────────────
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_by_department(dept_id: int, entity: str):
+    from db.queries import (PromotionQueries, CourseQueries, ProfessorQueries,
+                             ClassQueries, FiliereQueries, OptionEtudeQueries)
+    _map = {
+        "promotions": lambda: PromotionQueries.get_by_department(dept_id),
+        "courses":    lambda: CourseQueries.get_by_department(dept_id),
+        "professors": lambda: ProfessorQueries.get_by_department(dept_id),
+        "classes":    lambda: ClassQueries.get_by_department(dept_id),
+        "filieres":   lambda: FiliereQueries.get_by_department(dept_id),
+        "options":    lambda: OptionEtudeQueries.get_by_department(dept_id),
+    }
+    return _map.get(entity, lambda: [])() or []
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_registry_stats(uni_id: int):
+    from db.queries import StudentRegistryQueries
+    return StudentRegistryQueries.get_stats(uni_id) or {}
+
+
 # ── Helper pagination ─────────────────────────────────────────────────────────
 def _paginate(items, key, page_size=10):
     """Affiche les contrôles de pagination et retourne la tranche courante."""

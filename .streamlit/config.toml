@@ -1,3 +1,10 @@
+[server]
+maxMessageSize = 200
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
 [theme]
 base = "light"
 backgroundColor = "#F8FAFC"
