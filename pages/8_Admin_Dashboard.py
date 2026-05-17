@@ -5474,7 +5474,7 @@ def render_admin_departement(dept_id_override=None):
                     else:
                         try:
                             _FTQ.create(
-                                university_id=university_id,
+                                university_id=_dept_uni_id,
                                 name=_ft_name.strip(),
                                 amount=_ft_amount,
                                 currency=_ft_curr,
@@ -5489,7 +5489,7 @@ def render_admin_departement(dept_id_override=None):
 
             st.divider()
             st.markdown("#### Types de frais existants")
-            _fee_types = _FTQ.get_by_university(university_id)
+            _fee_types = _FTQ.get_by_university(_dept_uni_id)
             if not _fee_types:
                 st.info("Aucun type de frais créé.")
             else:
@@ -5530,7 +5530,7 @@ def render_admin_departement(dept_id_override=None):
         # ── Sous-onglet 2 : Assigner à une classe ────────────────────────────
         with _ft_sub2:
             st.markdown("#### Assigner un type de frais à toute une classe")
-            _fee_types2 = _FTQ.get_by_university(university_id)
+            _fee_types2 = _FTQ.get_by_university(_dept_uni_id)
             if not _fee_types2:
                 st.info("Créez d'abord un type de frais dans l'onglet précédent.")
             else:
@@ -5592,7 +5592,7 @@ def render_admin_departement(dept_id_override=None):
         # ── Sous-onglet 3 : Paiements ─────────────────────────────────────────
         with _ft_sub3:
             st.markdown("#### Gérer les paiements")
-            _fee_types3 = _FTQ.get_by_university(university_id)
+            _fee_types3 = _FTQ.get_by_university(_dept_uni_id)
             if not _fee_types3:
                 st.info("Aucun type de frais disponible.")
             else:
