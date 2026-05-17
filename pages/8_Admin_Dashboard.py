@@ -1527,6 +1527,9 @@ def render_admin_departement(dept_id_override=None):
         _cm3.metric("Volume horaire", f"{total_h}h")
         st.divider()
 
+        _SES_LBL = {"A":"Session 1","B":"Session 2","C":"Session 3",
+                    "D":"Session 4","E":"Session 5","F":"Session 6"}
+
         with st.expander("➕ Ajouter un cours (EC)"):
             # Selectboxes HORS du form → réactivité immédiate
             _ue_opts_add = [None] + _ues_list
@@ -1535,7 +1538,7 @@ def render_admin_departement(dept_id_override=None):
                 _ue_opts_add,
                 format_func=lambda u: (
                     "— Sans UE —" if u is None
-                    else f"[{u.get('group_label','?')}] {u.get('code','')} {u['name']}"
+                    else f"[{_SES_LBL.get(u.get('group_label',''),'?')}] {u.get('code','')} {u['name']}"
                 ),
                 key="ue_sel_add",
             )
@@ -1657,7 +1660,7 @@ def render_admin_departement(dept_id_override=None):
                         _ue_opts, index=_ue_cur,
                         format_func=lambda u: (
                             "— Sans UE —" if u is None
-                            else f"[{u.get('group_label','?')}] "
+                            else f"[{_SES_LBL.get(u.get('group_label',''),'?')}] "
                                  f"{u.get('code','')} {u['name']}"
                         ),
                         key=f"ue_sel_{course['id']}"
@@ -1700,7 +1703,7 @@ def render_admin_departement(dept_id_override=None):
         st.caption(
             "Une UE regroupe plusieurs cours (EC). "
             "La note UE = moyenne pondérée des notes EC par leurs crédits. "
-            "Le groupe (A, B…) sert au calcul des moyennes par groupe."
+            "La session (Session 1, Session 2…) détermine l'affichage du programme étudiant."
         )
 
         with st.expander("➕ Créer une UE"):
@@ -1717,7 +1720,10 @@ def render_admin_departement(dept_id_override=None):
                 _unew_c1, _unew_c2, _unew_c3 = st.columns([2, 1, 1])
                 _unew_name    = st.text_input("Intitulé * (ex: PHYSIOTHÉRAPIE 1)")
                 _unew_code    = _unew_c1.text_input("Code (ex: PHY 101)")
-                _unew_group   = _unew_c2.selectbox("Groupe", ["A","B","C","D","E","F"])
+                _SES_OPTS     = ["Session 1","Session 2","Session 3","Session 4","Session 5","Session 6"]
+                _SES_KEY      = {"Session 1":"A","Session 2":"B","Session 3":"C","Session 4":"D","Session 5":"E","Session 6":"F"}
+                _unew_group_lbl = _unew_c2.selectbox("Session", _SES_OPTS)
+                _unew_group     = _SES_KEY[_unew_group_lbl]
                 _unew_credits = _unew_c3.number_input("Crédits UE", min_value=0.0,
                                                        max_value=50.0, value=0.0, step=0.5)
                 if st.form_submit_button("✅ Créer", type="primary"):
@@ -1739,10 +1745,11 @@ def render_admin_departement(dept_id_override=None):
         _GROUPS_CLR = {"A":"#2563EB","B":"#7C3AED","C":"#059669",
                        "D":"#D97706","E":"#DC2626","F":"#0891B2"}
         for _ue in _paginate(_ues_list, "pg_dept_ues"):
-            _g_clr = _GROUPS_CLR.get(_ue.get("group_label","A"), "#64748B")
-            _ec_n  = int(_ue.get("ec_count") or 0)
+            _g_clr   = _GROUPS_CLR.get(_ue.get("group_label","A"), "#64748B")
+            _ec_n    = int(_ue.get("ec_count") or 0)
+            _ses_lbl = _SES_LBL.get(_ue.get("group_label",""), "?")
             with st.expander(
-                f"🎓 [{_ue.get('group_label','?')}] "
+                f"🎓 [{_ses_lbl}] "
                 f"{_ue.get('code','')} — {_ue['name']} "
                 f"· {int(_ue.get('credits',0))} crédits · {_ec_n} EC"
             ):
@@ -1750,11 +1757,15 @@ def render_admin_departement(dept_id_override=None):
                     _eu_n = st.text_input("Intitulé", value=_ue["name"])
                     _eu_c1, _eu_c2, _eu_c3 = st.columns([2, 1, 1])
                     _eu_code    = _eu_c1.text_input("Code", value=_ue.get("code",""))
-                    _eu_group   = _eu_c2.selectbox(
-                        "Groupe", ["A","B","C","D","E","F"],
-                        index=(["A","B","C","D","E","F"].index(_ue.get("group_label","A"))
-                               if _ue.get("group_label") in ["A","B","C","D","E","F"] else 0)
+                    _EU_SES_OPTS = ["Session 1","Session 2","Session 3","Session 4","Session 5","Session 6"]
+                    _EU_SES_KEY  = {"Session 1":"A","Session 2":"B","Session 3":"C","Session 4":"D","Session 5":"E","Session 6":"F"}
+                    _EU_SES_INV  = {v: k for k, v in _EU_SES_KEY.items()}
+                    _eu_group_lbl = _eu_c2.selectbox(
+                        "Session", _EU_SES_OPTS,
+                        index=(_EU_SES_OPTS.index(_EU_SES_INV.get(_ue.get("group_label","A"),"Session 1"))
+                               if _ue.get("group_label") in _EU_SES_INV else 0)
                     )
+                    _eu_group = _EU_SES_KEY[_eu_group_lbl]
                     _eu_credits = _eu_c3.number_input(
                         "Crédits", value=float(_ue.get("credits") or 0),
                         min_value=0.0, step=0.5
