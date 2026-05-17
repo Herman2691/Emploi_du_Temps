@@ -3026,6 +3026,111 @@ def render_admin_departement(dept_id_override=None):
             else:
                 st.button("📤 Exporter", disabled=True, use_container_width=True)
 
+        # ── Import Excel masse ────────────────────────────────────────────────
+        with st.expander("📥 Importer des étudiants depuis Excel"):
+            st.caption(
+                "Téléchargez le modèle, remplissez-le et réimportez-le. "
+                "Les colonnes obligatoires : **numéro étudiant**, **nom**, **prénom**, **promotion** (nom exact)."
+            )
+            _imp_file = st.file_uploader(
+                "Fichier Excel (.xlsx)", type=["xlsx"], key="import_reg_excel"
+            )
+            if _imp_file:
+                try:
+                    _df_imp = pd.read_excel(_imp_file, engine="openpyxl", dtype=str).fillna("")
+                    st.dataframe(_df_imp.head(10), use_container_width=True, hide_index=True)
+                    st.caption(f"{len(_df_imp)} ligne(s) détectées.")
+
+                    # Obtenir toutes les promotions du département
+                    _promos_imp = {p["name"]: p for p in (PromotionQueries.get_by_department(dept_id) or [])}
+                    _classes_imp = {}
+                    for _pn, _po in _promos_imp.items():
+                        for _cl in (ClassQueries.get_by_promotion(_po["id"]) or []):
+                            _classes_imp[_pn] = _cl  # première classe de la promo
+
+                    if st.button("✅ Importer", type="primary", key="do_import_reg"):
+                        _ok_i = _skip_i = _err_i = 0
+                        from utils.auth import hash_password as _hp_imp
+                        for _, _row in _df_imp.iterrows():
+                            _num  = str(_row.get("numéro étudiant", "")).strip()
+                            _nom  = str(_row.get("nom", "")).strip()
+                            _pre  = str(_row.get("prénom", "")).strip()
+                            _pos  = str(_row.get("postnom", "")).strip()
+                            _promo_name = str(_row.get("promotion", "")).strip()
+                            _annee = str(_row.get("année académique", "")).strip()
+                            if not _num or not _nom:
+                                _skip_i += 1; continue
+                            _promo_obj = _promos_imp.get(_promo_name)
+                            _class_obj = _classes_imp.get(_promo_name)
+                            try:
+                                from db.connection import execute_query as _eq_imp
+                                _exists = _eq_imp(
+                                    "SELECT id FROM student_registry WHERE student_number=%s AND university_id=%s",
+                                    (_num, uni_id_for_reg), fetch="one"
+                                )
+                                if _exists:
+                                    _skip_i += 1; continue
+                                _full = " ".join(filter(None, [_pre, _pos, _nom]))
+                                _eq_imp("""
+                                    INSERT INTO student_registry
+                                        (student_number, full_name, nom, postnom, prenom,
+                                         university_id, promotion_id, class_id, annee_academique,
+                                         provenance, sexe, statut)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'inscrit')
+                                """, (
+                                    _num, _full, _nom, _pos, _pre,
+                                    uni_id_for_reg,
+                                    _promo_obj["id"] if _promo_obj else None,
+                                    _class_obj["id"] if _class_obj else None,
+                                    _annee or (_current_ay["label"] if _current_ay else None),
+                                    str(_row.get("provenance", "")).strip() or None,
+                                    str(_row.get("sexe", "")).strip() or None,
+                                ), fetch="none")
+                                _ok_i += 1
+                            except Exception:
+                                _err_i += 1
+                        _msg_i = f"✅ {_ok_i} étudiant(s) importé(s)"
+                        if _skip_i: _msg_i += f" · {_skip_i} ignoré(s) (déjà présent ou données manquantes)"
+                        if _err_i:  _msg_i += f" · {_err_i} erreur(s)"
+                        (st.success if not _err_i else st.warning)(_msg_i)
+                        st.rerun()
+                except Exception as _ie:
+                    st.error(f"Erreur lecture fichier : {_ie}")
+
+        # ── Messages étudiants ────────────────────────────────────────────────
+        with st.expander("💬 Messages des étudiants"):
+            try:
+                from db.queries import StudentMessageQueries as _SMQ_reg
+                _stu_msgs = _SMQ_reg.get_by_department(dept_id)
+            except Exception:
+                _stu_msgs = []
+            _unread_count = sum(1 for m in _stu_msgs if not m.get("is_read"))
+            if _unread_count:
+                st.warning(f"📬 {_unread_count} message(s) non lu(s)")
+            if not _stu_msgs:
+                st.info("Aucun message d'étudiant.")
+            else:
+                for _sm_adm in _stu_msgs:
+                    _sm_bg = "#FFF7ED" if not _sm_adm.get("is_read") else "#F8FAFC"
+                    _sm_ts = _sm_adm["created_at"].strftime("%d/%m/%Y %H:%M") if _sm_adm.get("created_at") else ""
+                    with st.expander(
+                        f"{'🔴 ' if not _sm_adm.get('is_read') else ''}**{_sm_adm['student_name']}** "
+                        f"({_sm_adm['student_number']}) — {_sm_adm['subject']}  ·  {_sm_ts}"
+                    ):
+                        st.markdown(f"**Message :** {_sm_adm['body']}")
+                        if _sm_adm.get("reply"):
+                            st.success(f"**Réponse :** {_sm_adm['reply']}")
+                        else:
+                            with st.form(f"reply_msg_{_sm_adm['id']}"):
+                                _rep_txt = st.text_area("Répondre", key=f"rep_{_sm_adm['id']}")
+                                if st.form_submit_button("📤 Envoyer la réponse"):
+                                    if _rep_txt.strip():
+                                        _SMQ_reg.reply(_sm_adm["id"], _rep_txt.strip())
+                                        st.success("Réponse envoyée !"); st.rerun()
+                        if not _sm_adm.get("is_read"):
+                            if st.button("Marquer comme lu", key=f"read_{_sm_adm['id']}"):
+                                _SMQ_reg.mark_read(_sm_adm["id"]); st.rerun()
+
         st.divider()
 
         # ── Données de la page courante (50 par page) ─────────────────────────
@@ -4926,6 +5031,38 @@ def render_admin_departement(dept_id_override=None):
                                 "🧮 dans l'onglet Résultats."
                             )
 
+                        # PDF délibérations ───────────────────────────────────
+                        if _bul_results:
+                            try:
+                                from utils.pdf_export import generate_deliberation_pdf as _gdp
+                                _delibq = _delibq if '_delibq' in dir() else None
+                                _uni_name_bul = (dept.get("university_name") or
+                                                 (dept.get("faculty_name","") + " - " + dept.get("name","")) or
+                                                 "Universite")
+                                _delib_results = [{
+                                    "student_name":   r.get("student_name",""),
+                                    "student_number": r.get("student_number",""),
+                                    "moyenne_generale": r.get("average"),
+                                    "decision": ("VAL" if r.get("decision") == "Admis" else "NVAL"),
+                                } for r in _bul_results]
+                                _delib_pdf = _gdp(
+                                    university_name=_uni_name_bul,
+                                    class_name=_bul.get("class_name",""),
+                                    session_name=_bul.get("session_name",""),
+                                    academic_year=_bul.get("academic_year",""),
+                                    results=_delib_results,
+                                )
+                                st.download_button(
+                                    "📜 Télécharger PV Délibérations",
+                                    data=_delib_pdf,
+                                    file_name=f"deliberation_{_bul.get('class_name','').replace(' ','_')}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_delib_{_bul['id']}",
+                                    use_container_width=True,
+                                )
+                            except Exception as _dep:
+                                st.caption(f"PDF délibérations indisponible : {_dep}")
+
                     # Point 9 : Import PDF bulletin ───────────────────────────
                     st.divider()
                     st.markdown("**📎 Bulletin PDF**")
@@ -5452,8 +5589,8 @@ def render_admin_departement(dept_id_override=None):
                                 ClassQueries as _ClsQF, StudentQueries as _StuQF,
                                 PromotionQueries as _ProQF)
 
-        _ft_sub1, _ft_sub2, _ft_sub3 = st.tabs([
-            "📋 Types de frais", "🏫 Assigner à une classe", "💳 Paiements"
+        _ft_sub1, _ft_sub2, _ft_sub3, _ft_sub4 = st.tabs([
+            "📋 Types de frais", "🏫 Assigner à une classe", "💳 Paiements", "📊 Statistiques"
         ])
 
         # ── Sous-onglet 1 : Types de frais ────────────────────────────────────
@@ -5695,6 +5832,59 @@ def render_admin_departement(dept_id_override=None):
                                     _SFQ.mark_unpaid(_sel_stu_pay["id"])
                                     st.warning("Paiement annulé.")
                                     st.rerun()
+
+        # ── Sous-onglet 4 : Statistiques frais ───────────────────────────────
+        with _ft_sub4:
+            st.markdown("#### Statistiques des paiements")
+            _ft_all_s = _FTQ.get_by_university(_dept_uni_id)
+            if not _ft_all_s:
+                st.info("Aucun type de frais défini.")
+            else:
+                _promos_s  = _ProQF.get_by_department(dept_id)
+                _classes_s = []
+                for _pr in (_promos_s or []):
+                    _classes_s += (_ClsQF.get_by_promotion(_pr["id"]) or [])
+
+                _total_expected = 0
+                _total_paid     = 0
+                _total_pending  = 0
+                _rows_stat = []
+                for _cls in _classes_s:
+                    for _ft in _ft_all_s:
+                        _fees_s = _SFQ.get_by_class(_cls["id"], _ft["id"])
+                        if not _fees_s:
+                            continue
+                        _n_paid = sum(1 for f in _fees_s if f["is_paid"])
+                        _n_all  = len(_fees_s)
+                        _amt    = float(_ft.get("amount") or 0)
+                        _exp    = _n_all  * _amt
+                        _rec    = _n_paid * _amt
+                        _total_expected += _exp
+                        _total_paid     += _rec
+                        _total_pending  += (_exp - _rec)
+                        _rows_stat.append({
+                            "Classe":    _cls["name"],
+                            "Frais":     _ft["name"],
+                            "Montant":   f"{_amt} {_ft['currency']}",
+                            "Assignés":  _n_all,
+                            "Payés":     _n_paid,
+                            "Non payés": _n_all - _n_paid,
+                            "Taux":      f"{round(_n_paid/_n_all*100,1) if _n_all else 0}%",
+                        })
+
+                _sm1, _sm2, _sm3 = st.columns(3)
+                _sm1.metric("Total attendu",  f"{_total_expected:,.0f}")
+                _sm2.metric("Total encaissé", f"{_total_paid:,.0f}",
+                            delta=f"{round(_total_paid/_total_expected*100,1) if _total_expected else 0}%")
+                _sm3.metric("Reste à payer",  f"{_total_pending:,.0f}")
+                st.divider()
+
+                if _rows_stat:
+                    import pandas as _pd_fees_stat
+                    _df_stat = _pd_fees_stat.DataFrame(_rows_stat)
+                    st.dataframe(_df_stat, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucun frais assigné. Utilisez l'onglet 'Assigner à une classe'.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

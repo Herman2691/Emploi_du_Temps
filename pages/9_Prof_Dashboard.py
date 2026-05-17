@@ -1472,20 +1472,55 @@ with tab_presence:
                         label_visibility="collapsed"
                     )
 
+                # ── QR Code présence ─────────────────────────────────────────
                 st.divider()
-                if st.button("💾 Enregistrer l'appel", type="primary", key="save_presence"):
-                    _ok_pr = 0
-                    for _sid, _sval in _pr_vals.items():
+                _qr_col, _save_col = st.columns([2, 1])
+                with _qr_col:
+                    st.markdown("**📲 QR Code de présence**")
+                    st.caption("Générez un code que les étudiants saisissent pour pointer automatiquement.")
+                    _qr_key = f"qr_token_{_pr_slot['id']}"
+                    if st.button("🔄 Générer un code QR", key=f"gen_qr_{_pr_slot['id']}"):
                         try:
-                            AttendanceQueries.record(
-                                _pr_slot["id"], _sid, _sval,
-                                recorded_by=user["id"]
+                            from db.queries import AttendanceTokenQueries as _ATQ
+                            from datetime import date as _date_cls
+                            _ATQ.deactivate_for_slot(_pr_slot["id"])
+                            _new_tok = _ATQ.create(
+                                schedule_id=_pr_slot["id"],
+                                session_date=_date_cls.today(),
+                                created_by=user["id"],
+                                minutes=45,
                             )
-                            _ok_pr += 1
+                            st.session_state[_qr_key] = _new_tok
+                        except Exception as _qe:
+                            st.error(f"Erreur : {_qe}")
+
+                    if st.session_state.get(_qr_key):
+                        _tok_val = st.session_state[_qr_key]
+                        try:
+                            from utils.qr_helper import generate_qr_bytes as _gen_qr
+                            _qr_img = _gen_qr(_tok_val)
+                            st.image(_qr_img, width=160,
+                                     caption=f"Code : {_tok_val} (valide 45 min)")
                         except Exception:
-                            pass
-                    st.success(f"✅ Appel enregistré pour {_ok_pr} étudiant(s) !")
-                    st.rerun()
+                            st.markdown(f"### Code : `{_tok_val}`")
+                        st.caption("Affichez ce QR aux étudiants ou dictez le code.")
+
+                with _save_col:
+                    st.markdown("&nbsp;", unsafe_allow_html=True)
+                    if st.button("💾 Enregistrer l'appel", type="primary", key="save_presence",
+                                 use_container_width=True):
+                        _ok_pr = 0
+                        for _sid, _sval in _pr_vals.items():
+                            try:
+                                AttendanceQueries.record(
+                                    _pr_slot["id"], _sid, _sval,
+                                    recorded_by=user["id"]
+                                )
+                                _ok_pr += 1
+                            except Exception:
+                                pass
+                        st.success(f"✅ Appel enregistré pour {_ok_pr} étudiant(s) !")
+                        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

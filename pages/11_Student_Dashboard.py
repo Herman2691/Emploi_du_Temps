@@ -10,7 +10,8 @@ from db.queries import (ScheduleQueries, TpAssignmentQueries,
                          CourseDocumentQueries, AnnouncementQueries,
                          ClassMessageQueries, AttendanceQueries,
                          GradeClaimQueries, AcademicEnrollmentQueries,
-                         StudentResultsQueries)
+                         StudentResultsQueries, StudentFeeQueries,
+                         StudentMessageQueries, AttendanceTokenQueries)
 
 inject_global_css()
 require_student_auth()
@@ -54,6 +55,26 @@ class_id = student.get("class_id")
 if not class_id:
     st.warning("Votre classe n'est pas encore assignée. Contactez l'administration.")
     st.stop()
+
+# ── Notifications calculées ────────────────────────────────────────────────────
+try:
+    _notif_fees    = StudentFeeQueries.get_by_student(student["id"])
+    _unpaid_count  = sum(1 for f in _notif_fees if not f.get("is_paid"))
+    _msgs_count    = len(ClassMessageQueries.get_by_class(class_id) or [])
+    _recent_grades = GradeQueries.get_by_student(student["id"]) or []
+    _new_grades    = [g for g in _recent_grades
+                      if g.get("created_at") and
+                      (datetime.now() - g["created_at"].replace(tzinfo=None)).days <= 7]
+    _notifs = []
+    if _unpaid_count:
+        _notifs.append(("warning", f"💰 {_unpaid_count} frais non payé(s) — consultez l'onglet Mes Frais"))
+    if _new_grades:
+        _notifs.append(("info", f"📊 {len(_new_grades)} nouvelle(s) note(s) cette semaine"))
+    if _notifs:
+        for _lvl, _msg in _notifs:
+            getattr(st, _lvl)(_msg)
+except Exception:
+    pass
 
 def _mention_label(avg):
     if avg >= 18: return "Excellent"
@@ -157,6 +178,34 @@ with tab_edt:
             )
         except Exception as _ical_err:
             st.caption(f"⚠️ Export calendrier indisponible : {_ical_err}")
+
+        # ── PDF horaire ───────────────────────────────────────────────────────
+        try:
+            from utils.pdf_export import generate_schedule_pdf as _gen_sched_pdf
+            from db.connection import execute_query as _eq_sched
+            _uni_name_sched = (_eq_sched("""
+                SELECT u.name FROM universities u
+                JOIN faculties f ON f.university_id=u.id
+                JOIN departments d ON d.faculty_id=f.id
+                JOIN promotions pr ON pr.department_id=d.id
+                JOIN classes cl ON cl.promotion_id=pr.id
+                WHERE cl.id=%s LIMIT 1
+            """, (class_id,), fetch="one") or {}).get("name", "Universite")
+            _sched_pdf = _gen_sched_pdf(
+                schedules=schedules,
+                student_name=student.get("full_name", ""),
+                class_name=student.get("class_name", ""),
+                university_name=_uni_name_sched,
+                academic_year=(_ay_stu["label"] if _ay_stu else ""),
+            )
+            st.download_button(
+                "📄 Télécharger mon horaire (PDF)",
+                data=_sched_pdf,
+                file_name=f"horaire_{student['student_number']}.pdf",
+                mime="application/pdf",
+            )
+        except Exception as _pdf_err:
+            st.caption(f"⚠️ PDF indisponible : {_pdf_err}")
 
     # Annonces
     try:
@@ -1298,38 +1347,126 @@ with tab_presence:
             )
             st.progress(min(_tx / 100, 1.0))
 
+    # ── Pointer par code QR ───────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 📲 Pointer par code QR")
+    st.caption("Entrez le code à 6 caractères affiché par votre professeur pour marquer votre présence.")
+    with st.form("qr_pointer_form"):
+        _qr_code_input = st.text_input("Code de présence *", max_chars=6,
+                                        placeholder="ex: AB3X7K").upper().strip()
+        if st.form_submit_button("✅ Valider ma présence", type="primary"):
+            if not _qr_code_input:
+                st.error("Entrez le code.")
+            else:
+                try:
+                    _tok = AttendanceTokenQueries.get_by_token(_qr_code_input)
+                    if not _tok:
+                        st.error("Code invalide ou expiré.")
+                    elif _tok.get("class_id") != class_id:
+                        st.error("Ce code n'est pas pour votre classe.")
+                    else:
+                        AttendanceQueries.record(
+                            _tok["schedule_id"], student["id"], "present",
+                            recorded_by=student["id"]
+                        )
+                        st.success("✅ Présence enregistrée !")
+                        st.rerun()
+                except Exception as _qe:
+                    st.error(f"Erreur : {_qe}")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ONGLET 7 : MESSAGES
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_messages:
-    st.markdown("#### Messages de mes professeurs")
-    try:
-        _msgs = ClassMessageQueries.get_by_class(class_id)
-    except Exception as _e:
-        st.error(str(_e)); _msgs = []
+    _msg_sub1, _msg_sub2 = st.tabs(["📩 Messages reçus", "✉️ Contacter l'administration"])
 
-    if not _msgs:
-        st.info("Aucun message pour l'instant.")
-    else:
-        for _m in _msgs:
-            _urg = _m.get("is_urgent", False)
-            _bg  = "#FEF2F2" if _urg else "#F8FAFC"
-            _bd  = "#DC2626" if _urg else "#E2E8F0"
-            _ts  = _m["created_at"].strftime("%d/%m/%Y à %H:%M") if _m.get("created_at") else ""
-            st.markdown(f"""
-            <div style="background:{_bg};border:1px solid {_bd};
-                        border-radius:10px;padding:1rem;margin-bottom:0.75rem">
-                <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">
-                    <strong>{"🚨 " if _urg else ""}{ _m['subject']}</strong>
-                    <span style="font-size:0.78rem;color:#94A3B8">{_ts}</span>
+    with _msg_sub1:
+        st.markdown("#### Messages de mes professeurs")
+        try:
+            _msgs = ClassMessageQueries.get_by_class(class_id)
+        except Exception as _e:
+            st.error(str(_e)); _msgs = []
+
+        if not _msgs:
+            st.info("Aucun message pour l'instant.")
+        else:
+            for _m in _msgs:
+                _urg = _m.get("is_urgent", False)
+                _bg  = "#FEF2F2" if _urg else "#F8FAFC"
+                _bd  = "#DC2626" if _urg else "#E2E8F0"
+                _ts  = _m["created_at"].strftime("%d/%m/%Y à %H:%M") if _m.get("created_at") else ""
+                st.markdown(f"""
+                <div style="background:{_bg};border:1px solid {_bd};
+                            border-radius:10px;padding:1rem;margin-bottom:0.75rem">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">
+                        <strong>{"🚨 " if _urg else ""}{ _m['subject']}</strong>
+                        <span style="font-size:0.78rem;color:#94A3B8">{_ts}</span>
+                    </div>
+                    <div style="color:#475569;font-size:0.875rem">
+                        👨‍🏫 {_m['professor_name']}
+                    </div>
+                    <p style="color:#1E293B;margin:0.5rem 0 0">{_m['body']}</p>
                 </div>
-                <div style="color:#475569;font-size:0.875rem">
-                    👨‍🏫 {_m['professor_name']}
+                """, unsafe_allow_html=True)
+
+        st.divider()
+        st.markdown("#### Mes messages envoyés à l'administration")
+        try:
+            _sent = StudentMessageQueries.get_by_student(student["id"])
+        except Exception:
+            _sent = []
+        if not _sent:
+            st.info("Aucun message envoyé.")
+        else:
+            for _sm in _sent:
+                _ts2 = _sm["created_at"].strftime("%d/%m/%Y à %H:%M") if _sm.get("created_at") else ""
+                _has_reply = bool(_sm.get("reply"))
+                _bg2 = "#F0FDF4" if _has_reply else "#F8FAFC"
+                st.markdown(f"""
+                <div style="background:{_bg2};border:1px solid #E2E8F0;
+                            border-radius:10px;padding:1rem;margin-bottom:0.75rem">
+                    <div style="display:flex;justify-content:space-between">
+                        <strong>{_sm['subject']}</strong>
+                        <span style="font-size:0.78rem;color:#94A3B8">{_ts2}</span>
+                    </div>
+                    <p style="color:#475569;margin:0.4rem 0 0;font-size:0.875rem">{_sm['body']}</p>
+                    {"<p style='color:#059669;margin:0.4rem 0 0;font-size:0.85rem'><strong>Réponse :</strong> " + _sm['reply'] + "</p>" if _has_reply else "<p style='color:#94A3B8;font-size:0.78rem;margin:0.25rem 0 0'>En attente de réponse...</p>"}
                 </div>
-                <p style="color:#1E293B;margin:0.5rem 0 0">{_m['body']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+
+    with _msg_sub2:
+        st.markdown("#### Envoyer un message à l'administration")
+        try:
+            from db.connection import execute_query as _eq_msg
+            _dept_msg = _eq_msg("""
+                SELECT d.id FROM departments d
+                JOIN promotions pr ON pr.department_id=d.id
+                JOIN classes cl ON cl.promotion_id=pr.id
+                WHERE cl.id=%s LIMIT 1
+            """, (class_id,), fetch="one")
+            _dept_id_msg = _dept_msg["id"] if _dept_msg else None
+        except Exception:
+            _dept_id_msg = None
+
+        with st.form("send_student_msg"):
+            _subj = st.text_input("Objet *", placeholder="Ex: Question sur mon inscription")
+            _body = st.text_area("Message *", placeholder="Écrivez votre message ici...", height=120)
+            if st.form_submit_button("📤 Envoyer", type="primary"):
+                if _subj.strip() and _body.strip():
+                    try:
+                        StudentMessageQueries.send(
+                            student_id=student["id"],
+                            department_id=_dept_id_msg,
+                            subject=_subj.strip(),
+                            body=_body.strip(),
+                        )
+                        st.success("✅ Message envoyé ! L'administration vous répondra bientôt.")
+                        st.rerun()
+                    except Exception as _me:
+                        st.error(f"Erreur : {_me}")
+                else:
+                    st.error("L'objet et le message sont obligatoires.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -3668,3 +3668,108 @@ class StudentFeeQueries:
             "DELETE FROM student_fees WHERE id=%s",
             (student_fee_id,), fetch="none"
         )
+
+
+# ============================================================
+# MESSAGERIE ÉTUDIANTS → DÉPARTEMENT
+# ============================================================
+class StudentMessageQueries:
+
+    @staticmethod
+    def send(student_id, department_id, subject, body):
+        execute_query("""
+            INSERT INTO student_messages (student_id, department_id, subject, body)
+            VALUES (%s, %s, %s, %s)
+        """, (student_id, department_id, subject, body), fetch="none")
+
+    @staticmethod
+    def get_by_student(student_id):
+        return execute_query("""
+            SELECT sm.*, d.name AS department_name
+            FROM student_messages sm
+            LEFT JOIN departments d ON d.id = sm.department_id
+            WHERE sm.student_id = %s
+            ORDER BY sm.created_at DESC
+        """, (student_id,)) or []
+
+    @staticmethod
+    def get_by_department(department_id):
+        return execute_query("""
+            SELECT sm.*, s.full_name AS student_name, s.student_number
+            FROM student_messages sm
+            JOIN students s ON s.id = sm.student_id
+            WHERE sm.department_id = %s
+            ORDER BY sm.is_read ASC, sm.created_at DESC
+        """, (department_id,)) or []
+
+    @staticmethod
+    def count_unread(department_id):
+        r = execute_query("""
+            SELECT COUNT(*) AS n FROM student_messages
+            WHERE department_id=%s AND is_read=FALSE
+        """, (department_id,), fetch="one")
+        return (r or {}).get("n", 0)
+
+    @staticmethod
+    def mark_read(msg_id):
+        execute_query(
+            "UPDATE student_messages SET is_read=TRUE WHERE id=%s",
+            (msg_id,), fetch="none"
+        )
+
+    @staticmethod
+    def reply(msg_id, reply_text):
+        execute_query("""
+            UPDATE student_messages
+            SET reply=%s, replied_at=NOW(), is_read=TRUE
+            WHERE id=%s
+        """, (reply_text, msg_id), fetch="none")
+
+
+# ============================================================
+# TOKENS QR PRÉSENCES
+# ============================================================
+import random
+import string as _string
+
+class AttendanceTokenQueries:
+
+    @staticmethod
+    def _gen_token():
+        return "".join(random.choices(_string.ascii_uppercase + _string.digits, k=6))
+
+    @staticmethod
+    def create(schedule_id, session_date, created_by, minutes=30):
+        token = AttendanceTokenQueries._gen_token()
+        execute_query("""
+            INSERT INTO attendance_tokens
+                (schedule_id, token, session_date, created_by, expires_at)
+            VALUES (%s, %s, %s, %s, NOW() + INTERVAL '%s minutes')
+        """ % ('%s','%s','%s','%s', minutes),
+            (schedule_id, token, session_date, created_by), fetch="none"
+        )
+        return token
+
+    @staticmethod
+    def get_by_token(token):
+        return execute_query("""
+            SELECT at.*, s.course_name, s.day, s.start_time, s.end_time,
+                   s.class_id
+            FROM attendance_tokens at
+            JOIN schedules s ON s.id = at.schedule_id
+            WHERE at.token = %s AND at.is_active = TRUE AND at.expires_at > NOW()
+        """, (token,), fetch="one")
+
+    @staticmethod
+    def deactivate(token):
+        execute_query(
+            "UPDATE attendance_tokens SET is_active=FALSE WHERE token=%s",
+            (token,), fetch="none"
+        )
+
+    @staticmethod
+    def deactivate_for_slot(schedule_id):
+        execute_query(
+            "UPDATE attendance_tokens SET is_active=FALSE WHERE schedule_id=%s",
+            (schedule_id,), fetch="none"
+        )

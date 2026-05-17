@@ -957,3 +957,184 @@ def generate_attendance_report_pdf(
              align="C")
 
     return bytes(pdf.output())
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PDF EMPLOI DU TEMPS ETUDIANT
+# ──────────────────────────────────────────────────────────────────────────────
+_DAY_ORDER = {"Lundi": 0, "Mardi": 1, "Mercredi": 2, "Jeudi": 3, "Vendredi": 4, "Samedi": 5}
+
+def generate_schedule_pdf(schedules: list, student_name: str, class_name: str,
+                          university_name: str, academic_year: str) -> bytes:
+    W = 190
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_margins(10, 10, 10)
+
+    # En-tete
+    pdf.set_fill_color(*_DARK_BLUE)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(W, 10, university_name.upper()[:60], align="C",
+             fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(W, 7, "EMPLOI DU TEMPS", align="C",
+             fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+
+    # Infos etudiant
+    pdf.set_text_color(30, 41, 59)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_fill_color(*_LIGHT_BLUE)
+    pdf.cell(W, 6, f"  Etudiant : {student_name}   |   Classe : {class_name}   |   Annee : {academic_year}",
+             fill=True, border=1, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # En-tetes tableau
+    _CW = [22, 28, 70, 38, 32]
+    _HDRS = ["Jour", "Horaire", "Matiere", "Salle", "Professeur"]
+    pdf.set_fill_color(*_DARK_BLUE)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 8)
+    for _h, _w in zip(_HDRS, _CW):
+        pdf.cell(_w, 7, f" {_h}", border=1, fill=True, align="L")
+    pdf.ln()
+
+    # Lignes triees par jour puis heure
+    def _sort_key(s):
+        return (_DAY_ORDER.get(s.get("day", ""), 9), str(s.get("start_time", "")))
+
+    _sorted = sorted(schedules, key=_sort_key)
+    _last_day = None
+    pdf.set_text_color(30, 41, 59)
+    pdf.set_font("Helvetica", "", 8)
+    for _i, _s in enumerate(_sorted):
+        _fill = _i % 2 == 0
+        pdf.set_fill_color(*(_ALT_ROW if _fill else _WHITE))
+        _day = _s.get("day", "-")
+        _day_cell = _day if _day != _last_day else ""
+        _last_day = _day
+        _heure = f"{_fmt(_s.get('start_time'))} - {_fmt(_s.get('end_time'))}"
+        _cours = (_s.get("course_name") or "-")[:38]
+        _salle = (_s.get("room_name") or _s.get("room") or "-")[:22]
+        _prof  = (_s.get("professor_name") or "-")[:22]
+        for _v, _w in zip([_day_cell, _heure, _cours, _salle, _prof], _CW):
+            pdf.cell(_w, 6, f" {_v}", border=1, fill=_fill, align="L")
+        pdf.ln()
+
+    # Pied de page
+    pdf.ln(5)
+    pdf.set_draw_color(*_BLUE)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(*_MUTED)
+    pdf.cell(W, 5,
+             f"Genere le {datetime.now().strftime('%d/%m/%Y a %H:%M')} - UniSchedule",
+             align="C")
+    return bytes(pdf.output())
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PDF RAPPORT DE DELIBERATION
+# ──────────────────────────────────────────────────────────────────────────────
+def generate_deliberation_pdf(university_name: str, class_name: str,
+                               session_name: str, academic_year: str,
+                               results: list) -> bytes:
+    """
+    results: liste de dicts avec student_name, student_number,
+             moyenne_generale, decision ('VAL'|'NVAL'|'...')
+    """
+    W = 190
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_margins(10, 10, 10)
+
+    # En-tete
+    pdf.set_fill_color(*_DARK_BLUE)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(W, 10, university_name.upper()[:60], align="C",
+             fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(W, 7, "PROCES-VERBAL DE DELIBERATION", align="C",
+             fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+
+    # Infos session
+    pdf.set_fill_color(*_LIGHT_BLUE)
+    pdf.set_text_color(30, 41, 59)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(W, 6,
+             f"  Classe : {class_name}   |   Session : {session_name}   |   Annee : {academic_year}",
+             fill=True, border=1, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Statistiques rapides
+    _n_val  = sum(1 for r in results if (r.get("decision") or "").upper() == "VAL")
+    _n_nval = sum(1 for r in results if (r.get("decision") or "").upper() == "NVAL")
+    _n_tot  = len(results)
+    _taux   = round(_n_val / _n_tot * 100, 1) if _n_tot else 0
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(240, 253, 244)
+    pdf.cell(47, 7, f"  Total : {_n_tot}", border=1, fill=True)
+    pdf.cell(47, 7, f"  Admis (VAL) : {_n_val}", border=1, fill=True)
+    pdf.cell(47, 7, f"  Non admis : {_n_nval}", border=1, fill=True)
+    pdf.cell(49, 7, f"  Taux reussite : {_taux}%", border=1, fill=True)
+    pdf.ln(10)
+
+    # En-tetes tableau
+    _CW = [12, 35, 75, 30, 38]
+    _HDRS = ["N.", "N. Etudiant", "Nom complet", "Moyenne /20", "Decision"]
+    pdf.set_fill_color(*_DARK_BLUE)
+    pdf.set_text_color(*_WHITE)
+    pdf.set_font("Helvetica", "B", 8)
+    for _h, _w in zip(_HDRS, _CW):
+        pdf.cell(_w, 7, f" {_h}", border=1, fill=True, align="L")
+    pdf.ln()
+
+    # Lignes
+    for _i, _r in enumerate(results):
+        _dec = (_r.get("decision") or "---").upper()
+        _is_val = _dec == "VAL"
+        _fill_c = (240, 253, 244) if _is_val else (254, 242, 242)
+        pdf.set_fill_color(*_fill_c)
+        pdf.set_text_color(30, 41, 59)
+        pdf.set_font("Helvetica", "", 8)
+
+        _moy = _r.get("moyenne_generale")
+        _moy_str = f"{float(_moy):.2f}" if _moy is not None else "-"
+
+        for _v, _w in zip([str(_i + 1),
+                           _r.get("student_number", "-"),
+                           (_r.get("student_name") or "-")[:40],
+                           _moy_str,
+                           _dec], _CW):
+            pdf.cell(_w, 6, f" {_v}", border=1, fill=True, align="L")
+        pdf.ln()
+
+    # Zone signatures
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(30, 41, 59)
+    _sw = W // 3
+    for _sig in ["Le Secretaire", "Le Chef de Dept.", "Le Jury"]:
+        pdf.cell(_sw, 5, _sig, align="C")
+    pdf.ln(15)
+    for _ in range(3):
+        pdf.cell(_sw, 0, "", border="T")
+
+    # Pied de page
+    pdf.ln(6)
+    pdf.set_draw_color(*_BLUE)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(*_MUTED)
+    pdf.cell(W, 5,
+             f"Genere le {datetime.now().strftime('%d/%m/%Y a %H:%M')} - UniSchedule",
+             align="C")
+    return bytes(pdf.output())
