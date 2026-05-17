@@ -71,7 +71,7 @@ def _mention_color(avg):
     return "#EF4444"
 
 # ── Onglets ────────────────────────────────────────────────────────────────────
-tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_compte = st.tabs([
+tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_frais, tab_compte = st.tabs([
     "📅 Mon Horaire",
     "📝 Mes TPs",
     "📊 Mes Notes",
@@ -81,6 +81,7 @@ tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages,
     "💬 Messages",
     "📈 Mon Parcours",
     "📈 Progression",
+    "💰 Mes Frais",
     "⚙️ Mon Compte",
 ])
 
@@ -1471,6 +1472,87 @@ except Exception:
     _cb_results = []
 _cb_system = _system_student(student, _cb_grades, _cb_sched, _cb_claims, _cb_results)
 render_floating_chatbot(_cb_system, session_key="chatbot_student")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET : MES FRAIS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_frais:
+    from db.queries import StudentFeeQueries as _SFQ_stu
+
+    try:
+        _my_fees = _SFQ_stu.get_by_student(student["id"])
+    except Exception as _ef:
+        st.error(str(_ef))
+        _my_fees = []
+
+    if not _my_fees:
+        st.info("💰 Aucun frais académique enregistré pour votre compte pour l'instant.")
+    else:
+        # Résumé
+        _total_fees  = len(_my_fees)
+        _paid_fees   = sum(1 for f in _my_fees if f["is_paid"])
+        _unpaid_fees = _total_fees - _paid_fees
+        _total_amt   = sum(float(f.get("montant") or 0) for f in _my_fees)
+        _paid_amt    = sum(float(f.get("montant") or 0) for f in _my_fees if f["is_paid"])
+        _unpaid_amt  = _total_amt - _paid_amt
+
+        _currency = _my_fees[0]["currency"] if _my_fees else "$"
+
+        _m1, _m2, _m3 = st.columns(3)
+        _m1.metric("Total frais", f"{_total_amt:.0f} {_currency}")
+        _m2.metric("Payé", f"{_paid_amt:.0f} {_currency}")
+        _m3.metric("Restant dû", f"{_unpaid_amt:.0f} {_currency}")
+        st.divider()
+
+        # Tableau style document de référence
+        _TH_F = ("padding:8px 12px;border:1px solid #CBD5E1;"
+                 "background:#1E40AF;color:white;font-size:0.8rem;text-align:left")
+        _TD_F  = "padding:7px 12px;border:1px solid #E2E8F0;font-size:0.83rem"
+
+        _rows_f = ""
+        for _fee in _my_fees:
+            _mand = " <span style='color:#6B7280;font-size:0.73rem'>(Obligé)</span>" \
+                    if _fee.get("is_mandatory") else ""
+            _yr   = f" <span style='color:#94A3B8;font-size:0.73rem'>{_fee['academic_year']}</span>" \
+                    if _fee.get("academic_year") else ""
+            _amt  = f"{float(_fee['montant']):.0f} {_fee['currency']}" \
+                    if _fee.get("montant") else "#"
+            if _fee["is_paid"]:
+                _badge = ("<span style='background:#D1FAE5;color:#065F46;"
+                          "padding:3px 14px;border-radius:999px;font-size:0.78rem;"
+                          "font-weight:600'>Payé</span>")
+            else:
+                _badge = ("<span style='background:#FEE2E2;color:#991B1B;"
+                          "padding:3px 14px;border-radius:999px;font-size:0.78rem;"
+                          "font-weight:600'>Non</span>")
+            _rows_f += (
+                f"<tr>"
+                f"<td style='{_TD_F}'>{_fee['fee_name']}{_mand}{_yr}</td>"
+                f"<td style='{_TD_F};text-align:center'>{_amt}</td>"
+                f"<td style='{_TD_F};text-align:center'>{_badge}</td>"
+                f"</tr>"
+            )
+
+        st.markdown(
+            f"""<div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
+                <thead><tr>
+                    <th style="{_TH_F}">Intitulé</th>
+                    <th style="{_TH_F};text-align:center;width:120px">Prix</th>
+                    <th style="{_TH_F};text-align:center;width:120px">Statut</th>
+                </tr></thead>
+                <tbody>{_rows_f}</tbody>
+            </table></div>""",
+            unsafe_allow_html=True
+        )
+
+        if _unpaid_fees > 0:
+            st.warning(
+                f"Vous avez **{_unpaid_fees}** frais non payé(s) "
+                f"pour un total de **{_unpaid_amt:.0f} {_currency}**. "
+                "Veuillez vous rapprocher de l'administration."
+            )
+
 
 with tab_compte:
     from db.queries import StudentRegistryQueries as _SRQ_cpt

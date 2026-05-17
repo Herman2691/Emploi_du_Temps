@@ -1257,6 +1257,7 @@ def render_admin_departement(dept_id_override=None):
         "📩 Réclamations",            # 15
         "🗓️ Années acad.",            # 16
         "📈 Analyses",                # 17
+        "💰 Frais",                   # 18
     ])
 
     # ── UNIBOT BULLE FLOTTANTE ────────────────────────────────────────────────
@@ -5421,6 +5422,257 @@ def render_admin_departement(dept_id_override=None):
                             unsafe_allow_html=True
                         )
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # ONGLET 18 : FRAIS ACADÉMIQUES
+    # ══════════════════════════════════════════════════════════════════════════
+    with tabs[18]:
+        from db.queries import (FeeTypeQueries as _FTQ, StudentFeeQueries as _SFQ,
+                                ClassQueries as _ClsQF, StudentQueries as _StuQF,
+                                PromotionQueries as _ProQF)
+
+        _ft_sub1, _ft_sub2, _ft_sub3 = st.tabs([
+            "📋 Types de frais", "🏫 Assigner à une classe", "💳 Paiements"
+        ])
+
+        # ── Sous-onglet 1 : Types de frais ────────────────────────────────────
+        with _ft_sub1:
+            st.markdown("#### Créer un type de frais")
+            with st.form("fee_type_form"):
+                _fc1, _fc2 = st.columns(2)
+                _ft_name   = _fc1.text_input("Intitulé *", placeholder="Ex: Frais académiques")
+                _ft_amount = _fc2.number_input("Montant *", min_value=0.0, step=0.5, format="%.2f")
+                _fc3, _fc4, _fc5 = st.columns(3)
+                _ft_curr   = _fc3.selectbox("Devise", ["$", "FC", "€", "CDF"], index=0)
+                _ft_year   = _fc4.text_input("Année académique", placeholder="2025-2026")
+                _ft_mand   = _fc5.checkbox("Obligatoire")
+                _ft_desc   = st.text_input("Description (optionnel)")
+                if st.form_submit_button("➕ Créer", type="primary"):
+                    if not _ft_name.strip():
+                        st.error("L'intitulé est obligatoire.")
+                    else:
+                        try:
+                            _FTQ.create(
+                                university_id=university_id,
+                                name=_ft_name.strip(),
+                                amount=_ft_amount,
+                                currency=_ft_curr,
+                                is_mandatory=_ft_mand,
+                                academic_year=_ft_year.strip() or None,
+                                description=_ft_desc.strip() or None,
+                            )
+                            st.success("✅ Type de frais créé !")
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(f"Erreur : {_e}")
+
+            st.divider()
+            st.markdown("#### Types de frais existants")
+            _fee_types = _FTQ.get_by_university(university_id)
+            if not _fee_types:
+                st.info("Aucun type de frais créé.")
+            else:
+                for _ft in _fee_types:
+                    _mand_badge = " · **Obligatoire**" if _ft.get("is_mandatory") else ""
+                    _yr_badge   = f" · {_ft['academic_year']}" if _ft.get("academic_year") else ""
+                    _paid_txt   = f"{_ft.get('paid_count',0)}/{_ft.get('assigned_count',0)} payés"
+                    with st.expander(
+                        f"**{_ft['name']}** — {_ft['amount']} {_ft['currency']}"
+                        f"{_mand_badge}{_yr_badge}  ·  {_paid_txt}"
+                    ):
+                        _eu1, _eu2 = st.columns(2)
+                        with st.form(f"edit_ft_{_ft['id']}"):
+                            _en  = st.text_input("Intitulé", value=_ft["name"], key=f"fn_{_ft['id']}")
+                            _ea1, _ea2, _ea3 = st.columns(3)
+                            _eam = _ea1.number_input("Montant", value=float(_ft["amount"]),
+                                                     min_value=0.0, step=0.5, key=f"fa_{_ft['id']}")
+                            _ecr = _ea2.selectbox("Devise", ["$","FC","€","CDF"],
+                                                  index=["$","FC","€","CDF"].index(_ft["currency"])
+                                                  if _ft["currency"] in ["$","FC","€","CDF"] else 0,
+                                                  key=f"fc_{_ft['id']}")
+                            _eyr = _ea3.text_input("Année", value=_ft.get("academic_year") or "",
+                                                   key=f"fy_{_ft['id']}")
+                            _ema = st.checkbox("Obligatoire", value=bool(_ft.get("is_mandatory")),
+                                               key=f"fm_{_ft['id']}")
+                            _col_save, _col_del, _ = st.columns([1,1,2])
+                            if _col_save.form_submit_button("💾 Modifier", use_container_width=True):
+                                try:
+                                    _FTQ.update(_ft["id"], _en, _eam, _ecr, _ema, _eyr or None)
+                                    st.success("Modifié !")
+                                    st.rerun()
+                                except Exception as _e:
+                                    st.error(str(_e))
+                            if _col_del.form_submit_button("🗑️ Supprimer", use_container_width=True):
+                                _FTQ.delete(_ft["id"])
+                                st.rerun()
+
+        # ── Sous-onglet 2 : Assigner à une classe ────────────────────────────
+        with _ft_sub2:
+            st.markdown("#### Assigner un type de frais à toute une classe")
+            _fee_types2 = _FTQ.get_by_university(university_id)
+            if not _fee_types2:
+                st.info("Créez d'abord un type de frais dans l'onglet précédent.")
+            else:
+                _promos2 = _ProQF.get_by_department(dept_id)
+                if not _promos2:
+                    st.info("Aucune promotion dans ce département.")
+                else:
+                    with st.form("assign_fees_form"):
+                        _af1, _af2 = st.columns(2)
+                        _sel_ft = _af1.selectbox(
+                            "Type de frais *",
+                            options=_fee_types2,
+                            format_func=lambda f: f"{f['name']} — {f['amount']} {f['currency']}",
+                            key="sel_ft_assign"
+                        )
+                        _promo_list2 = _promos2
+                        _sel_promo = _af2.selectbox(
+                            "Promotion *",
+                            options=_promo_list2,
+                            format_func=lambda p: p["name"],
+                            key="sel_promo_assign"
+                        )
+                        _classes2 = _ClsQF.get_by_promotion(_sel_promo["id"]) if _sel_promo else []
+                        _sel_class = st.selectbox(
+                            "Classe (laisser vide = toute la promotion)",
+                            options=[None] + list(_classes2),
+                            format_func=lambda c: "Toute la promotion" if c is None else c["name"],
+                            key="sel_class_assign"
+                        )
+                        _override_amt = st.number_input(
+                            "Montant personnalisé (laisser à 0 = utiliser le montant du type)",
+                            min_value=0.0, step=0.5, format="%.2f", value=0.0
+                        )
+                        if st.form_submit_button("📤 Assigner", type="primary"):
+                            try:
+                                if _sel_class:
+                                    _students2 = _StuQF.get_by_class(_sel_class["id"])
+                                else:
+                                    _students2 = []
+                                    for _cl2 in _classes2:
+                                        _students2 += (_StuQF.get_by_class(_cl2["id"]) or [])
+                                if not _students2:
+                                    st.warning("Aucun étudiant trouvé.")
+                                else:
+                                    _amt_override = _override_amt if _override_amt > 0 else None
+                                    _SFQ.assign_bulk(
+                                        [s["id"] for s in _students2],
+                                        _sel_ft["id"],
+                                        _amt_override
+                                    )
+                                    st.success(
+                                        f"✅ Frais **{_sel_ft['name']}** assigné à "
+                                        f"**{len(_students2)}** étudiant(s) !"
+                                    )
+                                    st.rerun()
+                            except Exception as _e:
+                                st.error(f"Erreur : {_e}")
+
+        # ── Sous-onglet 3 : Paiements ─────────────────────────────────────────
+        with _ft_sub3:
+            st.markdown("#### Gérer les paiements")
+            _fee_types3 = _FTQ.get_by_university(university_id)
+            if not _fee_types3:
+                st.info("Aucun type de frais disponible.")
+            else:
+                _promos3 = _ProQF.get_by_department(dept_id)
+                _cl3_col, _ft3_col = st.columns(2)
+                _classes3_all = []
+                for _pr3 in (_promos3 or []):
+                    _classes3_all += (_ClsQF.get_by_promotion(_pr3["id"]) or [])
+
+                _sel_class3 = _cl3_col.selectbox(
+                    "Classe",
+                    options=_classes3_all,
+                    format_func=lambda c: c["name"],
+                    key="pay_class_sel"
+                )
+                _sel_ft3 = _ft3_col.selectbox(
+                    "Type de frais",
+                    options=_fee_types3,
+                    format_func=lambda f: f"{f['name']} — {f['amount']} {f['currency']}",
+                    key="pay_ft_sel"
+                )
+
+                if _sel_class3 and _sel_ft3:
+                    _fees3 = _SFQ.get_by_class(_sel_class3["id"], _sel_ft3["id"])
+                    if not _fees3:
+                        st.info("Aucun étudiant de cette classe n'a ce frais assigné. "
+                                "Utilisez l'onglet 'Assigner' d'abord.")
+                    else:
+                        _paid3   = [f for f in _fees3 if f["is_paid"]]
+                        _unpaid3 = [f for f in _fees3 if not f["is_paid"]]
+                        _m1, _m2, _m3 = st.columns(3)
+                        _m1.metric("Total assignés", len(_fees3))
+                        _m2.metric("Payés", len(_paid3))
+                        _m3.metric("Non payés", len(_unpaid3))
+                        st.divider()
+
+                        _TH_P = ("padding:6px 10px;border:1px solid #CBD5E1;"
+                                 "background:#1E40AF;color:white;font-size:0.78rem")
+                        _TD   = "padding:6px 10px;border:1px solid #E2E8F0;font-size:0.82rem"
+
+                        _rows_p = ""
+                        for _f3 in _fees3:
+                            _badge = (
+                                "<span style='background:#D1FAE5;color:#065F46;"
+                                "padding:2px 10px;border-radius:999px;font-weight:600'>"
+                                "Payé</span>"
+                            ) if _f3["is_paid"] else (
+                                "<span style='background:#FEE2E2;color:#991B1B;"
+                                "padding:2px 10px;border-radius:999px;font-weight:600'>"
+                                "Non payé</span>"
+                            )
+                            _btn_key = f"pay_btn_{_f3['id']}"
+                            _rows_p += (
+                                f"<tr>"
+                                f"<td style='{_TD}'>{_f3['student_name']}</td>"
+                                f"<td style='{_TD}'>{_f3['student_number']}</td>"
+                                f"<td style='{_TD};text-align:center'>"
+                                f"{_f3['montant']} {_f3['currency']}</td>"
+                                f"<td style='{_TD};text-align:center'>{_badge}</td>"
+                                f"</tr>"
+                            )
+                        st.markdown(
+                            f"""<div style="overflow-x:auto;margin-bottom:1rem">
+                            <table style="width:100%;border-collapse:collapse">
+                                <thead><tr>
+                                    <th style="{_TH_P}">Nom de l'étudiant</th>
+                                    <th style="{_TH_P}">N° Étudiant</th>
+                                    <th style="{_TH_P};text-align:center">Montant</th>
+                                    <th style="{_TH_P};text-align:center">Statut</th>
+                                </tr></thead>
+                                <tbody>{_rows_p}</tbody>
+                            </table></div>""",
+                            unsafe_allow_html=True
+                        )
+
+                        st.divider()
+                        st.markdown("##### Marquer des paiements")
+                        _sel_stu_pay = st.selectbox(
+                            "Étudiant",
+                            options=_fees3,
+                            format_func=lambda f: (
+                                f"{f['student_name']} ({f['student_number']}) — "
+                                f"{'✅ Payé' if f['is_paid'] else '❌ Non payé'}"
+                            ),
+                            key="pay_stu_sel"
+                        )
+                        if _sel_stu_pay:
+                            _cb1, _cb2, _ = st.columns([1, 1, 3])
+                            if not _sel_stu_pay["is_paid"]:
+                                if _cb1.button("✅ Marquer Payé",
+                                               key=f"mark_paid_{_sel_stu_pay['id']}",
+                                               type="primary", use_container_width=True):
+                                    _SFQ.mark_paid(_sel_stu_pay["id"], user["id"])
+                                    st.success("Marqué comme payé !")
+                                    st.rerun()
+                            else:
+                                if _cb2.button("↩️ Annuler paiement",
+                                               key=f"mark_unpaid_{_sel_stu_pay['id']}",
+                                               use_container_width=True):
+                                    _SFQ.mark_unpaid(_sel_stu_pay["id"])
+                                    st.warning("Paiement annulé.")
+                                    st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

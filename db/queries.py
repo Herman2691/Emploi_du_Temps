@@ -3533,3 +3533,138 @@ class AcademicYearQueries:
             WHERE id=%s
         """, (label, start_date or None, end_date or None,
               notes or None, year_id), fetch="none")
+
+
+# ============================================================
+# FRAIS ACADÉMIQUES
+# ============================================================
+class FeeTypeQueries:
+
+    @staticmethod
+    def get_by_university(university_id, active_only=True):
+        sql = """
+            SELECT ft.*,
+                   (SELECT COUNT(*) FROM student_fees sf WHERE sf.fee_type_id = ft.id) AS assigned_count,
+                   (SELECT COUNT(*) FROM student_fees sf WHERE sf.fee_type_id = ft.id AND sf.is_paid) AS paid_count
+            FROM fee_types ft
+            WHERE ft.university_id = %s
+        """
+        params = [university_id]
+        if active_only:
+            sql += " AND ft.is_active = TRUE"
+        sql += " ORDER BY ft.academic_year DESC NULLS LAST, ft.name"
+        return execute_query(sql, params) or []
+
+    @staticmethod
+    def create(university_id, name, amount, currency='$',
+               is_mandatory=False, academic_year=None, description=None):
+        return execute_query("""
+            INSERT INTO fee_types
+                (university_id, name, amount, currency, is_mandatory, academic_year, description)
+            VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id
+        """, (university_id, name, amount, currency or '$',
+              is_mandatory, academic_year or None, description or None), fetch="one")
+
+    @staticmethod
+    def update(fee_type_id, name, amount, currency='$',
+               is_mandatory=False, academic_year=None, description=None):
+        execute_query("""
+            UPDATE fee_types
+            SET name=%s, amount=%s, currency=%s, is_mandatory=%s,
+                academic_year=%s, description=%s
+            WHERE id=%s
+        """, (name, amount, currency or '$', is_mandatory,
+              academic_year or None, description or None, fee_type_id), fetch="none")
+
+    @staticmethod
+    def delete(fee_type_id):
+        execute_query(
+            "UPDATE fee_types SET is_active=FALSE WHERE id=%s",
+            (fee_type_id,), fetch="none"
+        )
+
+
+class StudentFeeQueries:
+
+    @staticmethod
+    def get_by_student(student_id):
+        return execute_query("""
+            SELECT sf.*, ft.name AS fee_name, ft.currency,
+                   ft.is_mandatory, ft.academic_year,
+                   COALESCE(sf.amount, ft.amount) AS montant
+            FROM student_fees sf
+            JOIN fee_types ft ON ft.id = sf.fee_type_id
+            WHERE sf.student_id = %s
+            ORDER BY ft.academic_year DESC NULLS LAST, ft.name
+        """, (student_id,)) or []
+
+    @staticmethod
+    def get_by_fee_type(fee_type_id):
+        """Tous les étudiants assignés à ce type de frais avec leur statut."""
+        return execute_query("""
+            SELECT sf.*, s.full_name AS student_name, s.student_number,
+                   ft.name AS fee_name, ft.currency,
+                   COALESCE(sf.amount, ft.amount) AS montant
+            FROM student_fees sf
+            JOIN students  s  ON s.id  = sf.student_id
+            JOIN fee_types ft ON ft.id = sf.fee_type_id
+            WHERE sf.fee_type_id = %s
+            ORDER BY s.full_name
+        """, (fee_type_id,)) or []
+
+    @staticmethod
+    def get_by_class(class_id, fee_type_id=None):
+        """Frais de tous les étudiants d'une classe."""
+        sql = """
+            SELECT sf.*, s.full_name AS student_name, s.student_number,
+                   ft.name AS fee_name, ft.currency,
+                   COALESCE(sf.amount, ft.amount) AS montant
+            FROM student_fees sf
+            JOIN students  s  ON s.id  = sf.student_id
+            JOIN fee_types ft ON ft.id = sf.fee_type_id
+            WHERE s.class_id = %s
+        """
+        params = [class_id]
+        if fee_type_id:
+            sql += " AND sf.fee_type_id = %s"
+            params.append(fee_type_id)
+        sql += " ORDER BY ft.name, s.full_name"
+        return execute_query(sql, params) or []
+
+    @staticmethod
+    def assign(student_id, fee_type_id, amount=None):
+        """Assigne un frais à un étudiant (ignore si déjà présent)."""
+        execute_query("""
+            INSERT INTO student_fees (student_id, fee_type_id, amount)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (student_id, fee_type_id) DO NOTHING
+        """, (student_id, fee_type_id, amount or None), fetch="none")
+
+    @staticmethod
+    def assign_bulk(student_ids: list, fee_type_id: int, amount=None):
+        """Assigne un frais à plusieurs étudiants d'un coup."""
+        for sid in student_ids:
+            StudentFeeQueries.assign(sid, fee_type_id, amount)
+
+    @staticmethod
+    def mark_paid(student_fee_id, paid_by_user_id=None, notes=None):
+        execute_query("""
+            UPDATE student_fees
+            SET is_paid=TRUE, paid_at=NOW(), paid_by=%s, notes=COALESCE(%s, notes)
+            WHERE id=%s
+        """, (paid_by_user_id or None, notes or None, student_fee_id), fetch="none")
+
+    @staticmethod
+    def mark_unpaid(student_fee_id):
+        execute_query("""
+            UPDATE student_fees
+            SET is_paid=FALSE, paid_at=NULL, paid_by=NULL
+            WHERE id=%s
+        """, (student_fee_id,), fetch="none")
+
+    @staticmethod
+    def delete(student_fee_id):
+        execute_query(
+            "DELETE FROM student_fees WHERE id=%s",
+            (student_fee_id,), fetch="none"
+        )
