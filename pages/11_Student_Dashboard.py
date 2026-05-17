@@ -71,7 +71,7 @@ def _mention_color(avg):
     return "#EF4444"
 
 # ── Onglets ────────────────────────────────────────────────────────────────────
-tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_frais, tab_compte = st.tabs([
+tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages, tab_parcours, tab_progression, tab_frais, tab_fiches, tab_compte = st.tabs([
     "📅 Mon Horaire",
     "📝 Mes TPs",
     "📊 Mes Notes",
@@ -82,6 +82,7 @@ tab_edt, tab_tp, tab_notes, tab_cours, tab_bulletin, tab_presence, tab_messages,
     "📈 Mon Parcours",
     "📈 Progression",
     "💰 Mes Frais",
+    "📋 Mes Fiches",
     "⚙️ Mon Compte",
 ])
 
@@ -1552,6 +1553,118 @@ with tab_frais:
                 f"pour un total de **{_unpaid_amt:.0f} {_currency}**. "
                 "Veuillez vous rapprocher de l'administration."
             )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET : MES FICHES D'ENRÔLEMENT
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_fiches:
+    from utils.pdf_export import generate_enrollment_pdf, generate_attendance_report_pdf
+    from db.queries import (CourseQueries as _CQ_fiche, ClassQueries as _ClsQ_fiche,
+                            AttendanceQueries as _AttQ_fiche, AcademicYearQueries as _AYQ_fiche)
+
+    # Charger les infos de classe et le programme une seule fois
+    try:
+        _cls_fiche   = _ClsQ_fiche.get_by_id(class_id)
+        _prog_fiche  = _CQ_fiche.get_programme_by_class(class_id)
+        _att_fiche   = _AttQ_fiche.get_student_stats(student["id"], class_id) or []
+    except Exception as _ef2:
+        st.error(str(_ef2))
+        _cls_fiche = None
+        _prog_fiche = []
+        _att_fiche  = []
+
+    # Année académique courante
+    try:
+        _uni_id_fiche = student.get("university_id")
+        _ay_fiche = _AYQ_fiche.get_current(_uni_id_fiche) if _uni_id_fiche else None
+        _ay_label_fiche = _ay_fiche["label"] if _ay_fiche else ""
+    except Exception:
+        _ay_label_fiche = ""
+
+    _fac_name  = (_cls_fiche.get("faculty_name", "")     if _cls_fiche else "")
+    _dept_name = (_cls_fiche.get("department_name", "")  if _cls_fiche else "")
+    _promo_name= (_cls_fiche.get("promotion_name", "")   if _cls_fiche else "")
+    _uni_name  = (_cls_fiche.get("university_name", "UniSchedule") if _cls_fiche else "UniSchedule")
+
+    st.markdown("#### Fiches Enrôlements")
+    st.caption(
+        "Téléchargez votre fiche d'enrôlement officielle ou votre rapport de présences "
+        "pour chaque session."
+    )
+    st.divider()
+
+    _SESSIONS = [
+        "S1 - Session Normale",
+        "S1 - Session de Rattrapage",
+        "S2 - Session Normale",
+        "S2 - Session de Rattrapage",
+    ]
+
+    if not _prog_fiche:
+        st.info("📭 Aucun cours enregistré pour votre classe. "
+                "Les fiches seront disponibles une fois le programme chargé.")
+    else:
+        for _sess in _SESSIONS:
+            with st.expander(f"📄 FICHE D'EXAMEN — {_sess.upper()}"):
+                _col_fiche, _col_att = st.columns(2)
+
+                # Fiche d'enrôlement
+                with _col_fiche:
+                    try:
+                        _pdf_enroll = generate_enrollment_pdf(
+                            student_name   = _display_name,
+                            student_number = student["student_number"],
+                            university_name= _uni_name,
+                            faculty_name   = _fac_name,
+                            department_name= _dept_name,
+                            promotion_name = _promo_name,
+                            filiere_name   = _cls_fiche.get("filiere_name","") if _cls_fiche else "",
+                            option_name    = _cls_fiche.get("option_name","")  if _cls_fiche else "",
+                            academic_year  = _ay_label_fiche,
+                            session_name   = _sess,
+                            programme      = _prog_fiche,
+                            class_name     = _cls_fiche["name"] if _cls_fiche else "",
+                        )
+                        st.download_button(
+                            "⬇️ Télécharger la fiche",
+                            data=_pdf_enroll,
+                            file_name=(
+                                f"fiche_enrolement_{student['student_number']}_"
+                                f"{_sess.replace(' ', '_').replace('-','')}.pdf"
+                            ),
+                            mime="application/pdf",
+                            key=f"dl_enroll_{_sess}",
+                            use_container_width=True,
+                            type="primary",
+                        )
+                    except Exception as _epdf:
+                        st.error(f"Erreur génération fiche : {_epdf}")
+
+                # Rapport de présences
+                with _col_att:
+                    try:
+                        _pdf_att = generate_attendance_report_pdf(
+                            student_name   = _display_name,
+                            student_number = student["student_number"],
+                            university_name= _uni_name,
+                            class_name     = _cls_fiche["name"] if _cls_fiche else "",
+                            academic_year  = _ay_label_fiche,
+                            attendance_stats = _att_fiche,
+                        )
+                        st.download_button(
+                            "⬇️ Télécharger rapport des présences",
+                            data=_pdf_att,
+                            file_name=(
+                                f"rapport_presences_{student['student_number']}_"
+                                f"{_sess.replace(' ', '_').replace('-','')}.pdf"
+                            ),
+                            mime="application/pdf",
+                            key=f"dl_att_{_sess}",
+                            use_container_width=True,
+                        )
+                    except Exception as _epdf2:
+                        st.error(f"Erreur génération rapport : {_epdf2}")
 
 
 with tab_compte:

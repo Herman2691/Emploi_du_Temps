@@ -640,3 +640,320 @@ def generate_bulletin_pdf_ue(
              align="C")
 
     return bytes(pdf.output())
+
+
+def generate_enrollment_pdf(
+    student_name: str,
+    student_number: str,
+    university_name: str,
+    faculty_name: str,
+    department_name: str,
+    promotion_name: str,
+    filiere_name: str,
+    option_name: str,
+    academic_year: str,
+    session_name: str,
+    programme: list,
+    class_name: str = "",
+) -> bytes:
+    """Génère une fiche d'enrôlement PDF pour un étudiant et une session donnée."""
+
+    _DB  = (30, 64, 175)
+    _B   = (37, 99, 235)
+    _LB  = (239, 246, 255)
+    _W   = (255, 255, 255)
+    _G   = (100, 116, 139)
+    _BRD = (203, 213, 225)
+    _ALT = (248, 250, 252)
+    _BLK = (15, 23, 42)
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(15, 15, 15)
+    W = pdf.w - 30
+
+    # En-tête université
+    pdf.set_fill_color(*_DB)
+    pdf.set_text_color(*_W)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(W, 9, university_name.upper(), border=0, fill=True,
+             align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    if faculty_name:
+        pdf.set_fill_color(*_B)
+        pdf.cell(W, 5, faculty_name, border=0, fill=True,
+                 align="C", new_x="LMARGIN", new_y="NEXT")
+    if department_name:
+        pdf.set_fill_color(*_B)
+        pdf.cell(W, 5, department_name, border=0, fill=True,
+                 align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Titre
+    pdf.set_text_color(*_DB)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(W, 8, "FICHE D'ENROLEMENT", align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(*_B)
+    pdf.cell(W, 6, session_name.upper(), align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+
+    # Infos étudiant
+    pdf.set_draw_color(*_BRD)
+    pdf.set_text_color(*_BLK)
+
+    def _row(label, value):
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(*_LB)
+        pdf.cell(45, 6, f"  {label} :", border=1, fill=True, align="L")
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_fill_color(*_W)
+        pdf.cell(W - 45, 6, f"  {value or '—'}", border=1, fill=True, align="L",
+                 new_x="LMARGIN", new_y="NEXT")
+
+    _row("Nom et Prenom", student_name)
+    _row("N Matricule", student_number)
+    _row("Promotion", promotion_name)
+    if filiere_name:
+        _row("Filiere", filiere_name)
+    if option_name:
+        _row("Option", option_name)
+    if class_name:
+        _row("Classe", class_name)
+    _row("Annee academique", academic_year or "—")
+    pdf.ln(5)
+
+    # Tableau programme
+    _groups = {}
+    for _c in programme:
+        _grp = _c.get("ue_group") or "—"
+        _ue_key = (_c.get("ue_id"), _c.get("ue_code") or "",
+                   _c.get("ue_name") or "", float(_c.get("ue_credits") or 0))
+        _groups.setdefault(_grp, {}).setdefault(_ue_key, []).append(_c)
+
+    _sorted_g = sorted(_groups.keys())
+    _sess_lbl = {g: f"Session {i+1}" for i, g in enumerate(_sorted_g)}
+    _CW = [22, 90, 22, 22, 34]
+
+    for _grp in _sorted_g:
+        _lbl = _sess_lbl.get(_grp, _grp).upper()
+        pdf.set_fill_color(*_DB)
+        pdf.set_text_color(*_W)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(sum(_CW), 7, f"  UE DU {_lbl}",
+                 border=1, fill=True, align="L", new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_fill_color(*_B)
+        pdf.set_font("Helvetica", "B", 7)
+        for _h, _w in zip(["Code UE", "Intitules UE / EC", "Cr. EC", "Cr. UE", "Professeur"], _CW):
+            pdf.cell(_w, 6, f" {_h}", border=1, fill=True, align="C")
+        pdf.ln()
+
+        _alt = False
+        for (_uid, _ucode, _uname, _ucred), _courses in sorted(
+            _groups[_grp].items(), key=lambda x: (x[0][1], x[0][2])
+        ):
+            if _uid:
+                pdf.set_fill_color(*_LB)
+                pdf.set_text_color(*_DB)
+                pdf.set_font("Helvetica", "B", 7.5)
+                pdf.cell(_CW[0], 6, f" {_ucode or '—'}", border=1, fill=True, align="C")
+                pdf.cell(_CW[1], 6, f" {_uname}", border=1, fill=True, align="L")
+                pdf.cell(_CW[2], 6, " —", border=1, fill=True, align="C")
+                pdf.cell(_CW[3], 6, f" {int(_ucred) if _ucred else '—'}",
+                         border=1, fill=True, align="C")
+                pdf.cell(_CW[4], 6, " —", border=1, fill=True, align="C")
+                pdf.ln()
+                for _ec in _courses:
+                    _bg = _ALT if _alt else _W
+                    pdf.set_fill_color(*_bg)
+                    pdf.set_text_color(*_BLK)
+                    pdf.set_font("Helvetica", "", 7)
+                    _cr = _ec.get("credits_ec")
+                    pdf.cell(_CW[0], 5.5, " —", border=1, fill=True, align="C")
+                    pdf.cell(_CW[1], 5.5, f"    -> {_ec['name']}", border=1, fill=True, align="L")
+                    pdf.cell(_CW[2], 5.5, f" {int(_cr) if _cr else '—'}",
+                             border=1, fill=True, align="C")
+                    pdf.cell(_CW[3], 5.5, " —", border=1, fill=True, align="C")
+                    pdf.cell(_CW[4], 5.5, f" {_ec.get('professor_name') or '—'}",
+                             border=1, fill=True, align="L")
+                    pdf.ln()
+                    _alt = not _alt
+            else:
+                for _ec in _courses:
+                    _bg = _ALT if _alt else _W
+                    pdf.set_fill_color(*_bg)
+                    pdf.set_text_color(*_BLK)
+                    pdf.set_font("Helvetica", "", 7)
+                    _cr = _ec.get("credits_ec")
+                    pdf.cell(_CW[0], 5.5, " —", border=1, fill=True, align="C")
+                    pdf.cell(_CW[1], 5.5, f" {_ec['name']}", border=1, fill=True, align="L")
+                    pdf.cell(_CW[2], 5.5, f" {int(_cr) if _cr else '—'}",
+                             border=1, fill=True, align="C")
+                    pdf.cell(_CW[3], 5.5, " —", border=1, fill=True, align="C")
+                    pdf.cell(_CW[4], 5.5, f" {_ec.get('professor_name') or '—'}",
+                             border=1, fill=True, align="L")
+                    pdf.ln()
+                    _alt = not _alt
+        pdf.ln(3)
+
+    # Zone signatures
+    pdf.ln(6)
+    _sig_w = W / 3
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(*_BLK)
+    for _sl in ["L'etudiant(e)", "Chef de departement", "Le Doyen"]:
+        pdf.cell(_sig_w, 6, _sl, border=0, align="C")
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(*_G)
+    for _ in range(3):
+        pdf.cell(_sig_w, 6, "Signature & cachet", border=0, align="C")
+    pdf.ln(12)
+    _x0 = pdf.get_x()
+    _y0 = pdf.get_y()
+    for _i in range(3):
+        pdf.line(_x0 + _sig_w * _i + 5, _y0, _x0 + _sig_w * (_i + 1) - 5, _y0)
+    pdf.ln(8)
+
+    # Pied de page
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(*_G)
+    pdf.cell(W, 5,
+             f"Genere le {datetime.now().strftime('%d/%m/%Y a %H:%M')} - UniSchedule",
+             align="C")
+
+    return bytes(pdf.output())
+
+
+def generate_attendance_report_pdf(
+    student_name: str,
+    student_number: str,
+    university_name: str,
+    class_name: str,
+    academic_year: str,
+    attendance_stats: list,
+) -> bytes:
+    """Génère un rapport d'assiduité PDF pour un étudiant."""
+
+    _DB  = (30, 64, 175)
+    _B   = (37, 99, 235)
+    _LB  = (239, 246, 255)
+    _W   = (255, 255, 255)
+    _G   = (100, 116, 139)
+    _BRD = (203, 213, 225)
+    _ALT = (248, 250, 252)
+    _BLK = (15, 23, 42)
+    _GRN = (5, 150, 105)
+    _RED = (220, 38, 38)
+    _AMB = (217, 119, 6)
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(15, 15, 15)
+    W = pdf.w - 30
+
+    # En-tête
+    pdf.set_fill_color(*_DB)
+    pdf.set_text_color(*_W)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(W, 9, university_name.upper(), border=0, fill=True,
+             align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    pdf.set_text_color(*_DB)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(W, 8, "RAPPORT D'ASSIDUITE", align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*_G)
+    pdf.cell(W, 5, f"Annee academique : {academic_year or '—'}",
+             align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+
+    # Infos étudiant
+    pdf.set_draw_color(*_BRD)
+    pdf.set_text_color(*_BLK)
+    for _lbl, _val in [("Nom et Prenom", student_name),
+                       ("N Matricule", student_number),
+                       ("Classe", class_name)]:
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(*_LB)
+        pdf.cell(40, 6, f"  {_lbl} :", border=1, fill=True)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_fill_color(*_W)
+        pdf.cell(W - 40, 6, f"  {_val or '—'}", border=1, fill=True,
+                 new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(5)
+
+    # Résumé global
+    if attendance_stats:
+        _tp = sum(int(r.get("presences") or 0) for r in attendance_stats)
+        _ta = sum(int(r.get("absences")  or 0) for r in attendance_stats)
+        _ts = _tp + _ta
+        _tg = round(_tp / _ts * 100, 1) if _ts else 0
+        _gc = _GRN if _tg >= 75 else _AMB if _tg >= 50 else _RED
+        _sw = W / 3
+        pdf.set_fill_color(*_LB)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*_BLK)
+        for _h in ["Seances assistees", "Absences", "Taux global"]:
+            pdf.cell(_sw, 6, _h, border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_fill_color(*_W)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(_sw, 8, str(_tp), border=1, fill=True, align="C")
+        pdf.cell(_sw, 8, str(_ta), border=1, fill=True, align="C")
+        pdf.set_text_color(*_gc)
+        pdf.cell(_sw, 8, f"{_tg}%", border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_text_color(*_BLK)
+        pdf.ln(4)
+
+    # Tableau par cours
+    _CW2 = [90, 25, 25, 25, 25]
+    pdf.set_fill_color(*_DB)
+    pdf.set_text_color(*_W)
+    pdf.set_font("Helvetica", "B", 8)
+    for _h, _w in zip(["Cours", "Seances", "Presences", "Absences", "Taux %"], _CW2):
+        pdf.cell(_w, 7, f" {_h}", border=1, fill=True, align="C")
+    pdf.ln()
+
+    _alt2 = False
+    for _stat in (attendance_stats or []):
+        _tx = float(_stat.get("taux_presence") or 0)
+        _tc = _GRN if _tx >= 75 else _AMB if _tx >= 50 else _RED
+        _bg = _ALT if _alt2 else _W
+        pdf.set_fill_color(*_bg)
+        pdf.set_text_color(*_BLK)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(_CW2[0], 6, f" {_stat.get('course_name','—')}", border=1, fill=True, align="L")
+        pdf.cell(_CW2[1], 6, f" {_stat.get('total_seances','—')}", border=1, fill=True, align="C")
+        pdf.cell(_CW2[2], 6, f" {_stat.get('presences','—')}", border=1, fill=True, align="C")
+        pdf.cell(_CW2[3], 6, f" {_stat.get('absences','0')}", border=1, fill=True, align="C")
+        pdf.set_text_color(*_tc)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(_CW2[4], 6, f" {_tx:.0f}%", border=1, fill=True, align="C")
+        pdf.ln()
+        _alt2 = not _alt2
+
+    if not attendance_stats:
+        pdf.set_fill_color(*_ALT)
+        pdf.set_text_color(*_G)
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.cell(sum(_CW2), 6, "  Aucune donnee d'assiduite disponible.",
+                 border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
+
+    # Pied de page
+    pdf.ln(8)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(*_G)
+    pdf.cell(W, 5,
+             f"Genere le {datetime.now().strftime('%d/%m/%Y a %H:%M')} - UniSchedule",
+             align="C")
+
+    return bytes(pdf.output())
