@@ -14,76 +14,44 @@ inject_global_css()
 user    = get_current_user()
 student = get_current_student()
 
-# ── Construction dynamique des pages selon l'état de connexion ─────────────────
+# ── Construction des pages (toutes toujours enregistrées pour éviter "Page not found") ──
 
-_is_prof = user and (
-    str(user.get("role", "")).strip().lower() == "professeur"
-    or user.get("professor_id") is not None
-)
+_is_prof  = user and (str(user.get("role","")).strip().lower() == "professeur"
+                      or user.get("professor_id") is not None)
 _is_admin = user and not _is_prof
 
+# Déterminer la page par défaut
 if _is_prof:
-    # Professeur → Accueil + Horaire + son espace uniquement
-    all_pages = {
-        "🌐 Espace Public": [
-            st.Page("pages/1_Accueil.py",         title="Accueil",         icon="🏠"),
-            st.Page("pages/2_Horaire.py",         title="Mon Horaire",     icon="📅"),
-        ],
-        "👨‍🏫 Espace Professeur": [
-            st.Page("pages/9_Prof_Dashboard.py",  title="Mon Espace Prof", icon="📖", default=True),
-        ],
-    }
-
+    _default_page = "pages/9_Prof_Dashboard.py"
 elif _is_admin:
-    # Admin (toute hiérarchie) → tout visible
-    all_pages = {
-        "🌐 Espace Public": [
-            st.Page("pages/1_Accueil.py",          title="Accueil",           icon="🏠"),
-            st.Page("pages/2_Horaire.py",          title="Mon Horaire",       icon="📅"),
-        ],
-        "🎓 Espace Étudiant": [
-            st.Page("pages/10_Student_Auth.py",    title="Espace Étudiant",   icon="🎓"),
-            st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",      icon="📚"),
-        ],
-        "👨‍🏫 Espace Professeur": [
-            st.Page("pages/12_Prof_Auth.py",       title="Espace Professeur", icon="👨‍🏫"),
-        ],
-        "⚙️ Administration": [
-            st.Page("pages/8_Admin_Dashboard.py",  title="Dashboard Admin",   icon="📊", default=True),
-        ],
-    }
-
+    _default_page = "pages/8_Admin_Dashboard.py"
 elif student:
-    # Étudiant → Accueil + Horaire + son espace uniquement
-    all_pages = {
-        "🌐 Espace Public": [
-            st.Page("pages/1_Accueil.py",          title="Accueil",         icon="🏠"),
-            st.Page("pages/2_Horaire.py",          title="Mon Horaire",     icon="📅"),
-        ],
-        "🎓 Espace Étudiant": [
-            st.Page("pages/10_Student_Auth.py",    title="Espace Étudiant", icon="🎓"),
-            st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",    icon="📚", default=True),
-        ],
-    }
-
+    _default_page = "pages/11_Student_Dashboard.py"
 else:
-    # Non connecté → Login unifié + Horaire public
-    all_pages = {
-        "🌐 Espace Public": [
-            st.Page("pages/1_Accueil.py",          title="Connexion",        icon="🔑", default=True),
-            st.Page("pages/2_Horaire.py",          title="Emploi du Temps",  icon="📅"),
-        ],
-        "🎓 Espace Étudiant": [
-            st.Page("pages/10_Student_Auth.py",    title="Créer un compte",  icon="📝"),
-            st.Page("pages/11_Student_Dashboard.py", title="Mon Espace",     icon="📚"),
-        ],
-        "👨‍🏫 Espace Professeur": [
-            st.Page("pages/12_Prof_Auth.py",       title="Espace Professeur", icon="👨‍🏫"),
-        ],
-        "⚙️ Administration": [
-            st.Page("pages/7_Admin_Login.py",      title="Connexion Admin",   icon="🔑"),
-        ],
-    }
+    _default_page = "pages/1_Accueil.py"
+
+def _pg(path, title, icon):
+    return st.Page(path, title=title, icon=icon,
+                   default=(path == _default_page))
+
+all_pages = {
+    "🌐 Espace Public": [
+        _pg("pages/1_Accueil.py",             "Accueil",           "🏠"),
+        _pg("pages/2_Horaire.py",             "Emploi du Temps",   "📅"),
+    ],
+    "🎓 Espace Étudiant": [
+        _pg("pages/10_Student_Auth.py",       "Espace Étudiant",   "🎓"),
+        _pg("pages/11_Student_Dashboard.py",  "Mon Espace",        "📚"),
+    ],
+    "👨‍🏫 Espace Professeur": [
+        _pg("pages/12_Prof_Auth.py",          "Connexion Prof",    "👨‍🏫"),
+        _pg("pages/9_Prof_Dashboard.py",      "Mon Espace Prof",   "📖"),
+    ],
+    "⚙️ Administration": [
+        _pg("pages/7_Admin_Login.py",         "Connexion Admin",   "🔑"),
+        _pg("pages/8_Admin_Dashboard.py",     "Dashboard Admin",   "📊"),
+    ],
+}
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
