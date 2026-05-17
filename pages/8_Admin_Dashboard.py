@@ -1532,13 +1532,24 @@ def render_admin_departement(dept_id_override=None):
 
         with st.expander("➕ Ajouter un cours (EC)"):
             # Selectboxes HORS du form → réactivité immédiate
-            _ue_opts_add = [None] + _ues_list
+            _SES_KEY_ADD = {"Session 1":"A","Session 2":"B","Session 3":"C",
+                            "Session 4":"D","Session 5":"E","Session 6":"F"}
+            _ses_opts_add = ["— Toutes sessions —"] + list(_SES_KEY_ADD.keys())
+            _sel_ses_add  = st.selectbox("Session *", _ses_opts_add, key="ses_sel_add")
+            _ses_filter   = _SES_KEY_ADD.get(_sel_ses_add)
+
+            # Filtrer les UE selon la session choisie
+            _ues_filtered = (
+                [u for u in _ues_list if u.get("group_label") == _ses_filter]
+                if _ses_filter else _ues_list
+            )
+            _ue_opts_add = [None] + _ues_filtered
             _sel_ue_add = st.selectbox(
                 "Unité d'Enseignement (UE)",
                 _ue_opts_add,
                 format_func=lambda u: (
                     "— Sans UE —" if u is None
-                    else f"[{_SES_LBL.get(u.get('group_label',''),'?')}] {u.get('code','')} {u['name']}"
+                    else f"{u.get('code','')} {u['name']}"
                 ),
                 key="ue_sel_add",
             )
